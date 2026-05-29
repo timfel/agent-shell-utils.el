@@ -22,6 +22,8 @@
 
 (require 'jira)
 (require 'jira-utils)
+(require 'agent-shell)
+(require 'agent-shell-utils)
 (require 'agent-shell-fanout)
 
 (defvar jira-detail--current-key nil)
