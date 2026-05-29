@@ -208,8 +208,10 @@ also creates a bubblewrap filesystem view."
                          (let ((p (car e))
                                (m (cdr e)))
                            (cond
-                            ((eq m 'w) (list "--bind" p p))
-                            ((eq m 'r) (list "--ro-bind" p p))
+                            ((eq m 'w) (list "--bind" (file-truename p) (file-truename p)
+                                             "--bind" p p))
+                            ((eq m 'r) (list "--ro-bind" (file-truename p) (file-truename p)
+                                             "--ro-bind" p p))
                             (t (list "--tmpfs" p)))))))
          `("--proc" "/proc"
            "--dev" "/dev"
