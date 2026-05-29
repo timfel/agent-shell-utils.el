@@ -13,6 +13,8 @@ The package is split into separately loadable features:
   usually one per Git worktree.
 - `agent-shell-ralph.el`: keep a session moving with buffer-local continuation
   rules, retry after rate limits, and force an idle prompt-ready state.
+- `agent-shell-jira.el`: Integration with jira.el to launch agents to investigate
+  issues.
 
 All customization lives under the `agent-shell-utils` Custom group.
 
