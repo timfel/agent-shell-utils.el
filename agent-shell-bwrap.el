@@ -106,6 +106,7 @@ Set to nil to disable cleanup."
     ("~/.pyenv" . r)
     ("~/.rustup" . r)
     ("~/.sdkman" . r)
+    ("~/dotfiles" . r)
     ("~/dev" . r)
 
     ("~/.config/mc" . nil)
