@@ -77,6 +77,8 @@ Set to nil to disable cleanup."
     ("~/dev/eclipse" . w)
     ("~/dev/mx" . w)
     ("../graal" . w)
+    ("../graalos" . w)
+    ("../graalos-image-builder" . w)
     ("../graal-enterprise" . w)
     ("../ci-overlays" . w)
 
