@@ -249,14 +249,28 @@ and is not currently used by an `agent-shell' buffer, return it for reuse."
       (when (zerop (process-file "git" nil t nil "rev-parse" "--show-toplevel"))
         (string-trim (buffer-string))))))
 
-(defun agent-shell-fanout--preferred-config ()
-  "Return the preferred `agent-shell' config."
-  (cond
-   ((fboundp 'agent-shell--resolve-preferred-config)
-    (copy-alist (agent-shell--resolve-preferred-config)))
-   ((fboundp 'agent-shell-select-config)
-    (copy-alist (agent-shell-select-config :prompt "Agent config: ")))
-   (t nil)))
+(defun agent-shell-fanout--preferred-config (&optional prompt)
+  "Return the preferred `agent-shell' config.
+
+When PROMPT is non-nil, prompt for an agent config if no preferred config is
+available.  Programmatic fan-out calls should not unexpectedly enter the
+minibuffer."
+  (let ((config
+         (cond
+          ((null agent-shell-preferred-agent-config) nil)
+          ((symbolp agent-shell-preferred-agent-config)
+           (seq-find
+            (lambda (config)
+              (eq (map-elt config :identifier)
+                  agent-shell-preferred-agent-config))
+            agent-shell-agent-configs))
+          ((listp agent-shell-preferred-agent-config)
+           agent-shell-preferred-agent-config))))
+    (cond
+     (config (copy-alist config))
+     (prompt
+      (copy-alist (agent-shell-select-config :prompt "Agent config: ")))
+     (t nil))))
 
 (defun agent-shell-fanout--task-spec-title (title-or-dir)
   "Return a display title for TITLE-OR-DIR."
@@ -304,8 +318,9 @@ When DIRECTORY is nil, use `default-directory'."
          (needs-repo-root (not (seq-every-p #'file-name-absolute-p titles)))
          (directory (file-name-as-directory
                      (expand-file-name (or directory default-directory))))
-         (agent-shell-session-strategy (or session-strategy 'latest))
-         (config (agent-shell-fanout--preferred-config))
+         (agent-shell-session-strategy (or session-strategy 'new))
+         (config (agent-shell-fanout--preferred-config
+                  (called-interactively-p 'interactive)))
          (repo-root (when needs-repo-root
                       (agent-shell-fanout--repo-root directory))))
     (when (and needs-repo-root (not repo-root))
@@ -342,7 +357,7 @@ When DIRECTORY is nil, use `default-directory'."
                 (lambda (worktree-dir config task)
                   (let ((default-directory worktree-dir)
                         (agent-shell-session-strategy
-                         (or session-strategy 'latest))
+                         (or session-strategy 'new))
                         (agent-shell-cwd-function
                          (lambda () worktree-dir)))
                     (when-let ((shell-buffer
