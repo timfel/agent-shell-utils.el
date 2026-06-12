@@ -298,15 +298,19 @@ of each turn, the rule is evaluated.  If it matches the configured trigger,
   :lighter " RL-Retry"
   :group 'agent-shell-utils
   (if agent-shell-ralph-rate-limit-retry-mode
-      (let ((buffer (current-buffer)))
-        (agent-shell-ralph--ensure-agent-shell)
-        (setq agent-shell-ralph-rate-limit-retry-mode--subscription-token
-              (agent-shell-subscribe-to
-               :shell-buffer buffer
-               :event 'error
-               :on-event
-               (lambda (event)
-                 (agent-shell-ralph--handle-rate-limit event buffer)))))
+      (run-with-idle-timer
+       5
+       nil
+       (lambda (b)
+         (agent-shell-ralph--ensure-agent-shell)
+         (setq agent-shell-ralph-rate-limit-retry-mode--subscription-token
+               (agent-shell-subscribe-to
+                :shell-buffer buffer
+                :event 'error
+                :on-event
+                (lambda (event)
+                  (agent-shell-ralph--handle-rate-limit event buffer)))))
+       (current-buffer))
     (when agent-shell-ralph-rate-limit-retry-mode--subscription-token
       (agent-shell-unsubscribe
        :subscription agent-shell-ralph-rate-limit-retry-mode--subscription-token)
