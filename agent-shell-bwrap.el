@@ -5,7 +5,7 @@
 ;; Author: Tim Felgentreff
 ;; URL: https://github.com/timfel/agent-shell-utils
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (agent-shell "0.52.1"))
+;; Package-Requires: ((emacs "29.1") (agent-shell "0.55.1"))
 ;; Keywords: tools, convenience
 
 ;; This file is not part of GNU Emacs.

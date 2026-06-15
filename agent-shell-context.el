@@ -5,7 +5,7 @@
 ;; Author: Tim Felgentreff
 ;; URL: https://github.com/timfel/agent-shell-utils
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (agent-shell "0.52.1"))
+;; Package-Requires: ((emacs "29.1") (agent-shell "0.55.1"))
 ;; Keywords: tools, convenience
 
 ;; This file is not part of GNU Emacs.
@@ -77,6 +77,24 @@ These buffers are considered even when they are not part of the target
     agent-shell-context-emacs-source)
   "Additional context source functions installed by `agent-shell-context-mode'."
   :type '(repeat function)
+  :group 'agent-shell-utils)
+
+(defcustom agent-shell-context-major-mode-languages
+  '((fundamental-mode . "text")
+    (special-mode . "text")
+    (vterm-mode . "text")
+    (term-mode . "text")
+    (eshell-mode . "text")
+    (comint-mode . "text")
+    (shell-mode . "text"))
+  "Language names to use for fenced context blocks by major mode.
+
+Values should be language identifiers accepted by the `agent-shell' markdown
+renderer.  The renderer resolves LANG in ```LANG fences by calling
+LANG-mode after applying its own alias table, so values such as
+\"emacs-lisp\", \"python-ts\", \"sh\", \"diff\", and \"text\" trigger the
+corresponding major-mode highlighter."
+  :type '(alist :key-type symbol :value-type string)
   :group 'agent-shell-utils)
 
 (defvar agent-shell-context-sent-states (make-hash-table :test 'equal)
@@ -221,6 +239,42 @@ These buffers are considered even when they are not part of the target
         (agent-shell-context--shell-snippet)
       (agent-shell-context--lines-around-point))))
 
+(defun agent-shell-context--fence-language-for-mode (mode)
+  "Return the source block language to use for major MODE."
+  (let* ((mapped (alist-get mode agent-shell-context-major-mode-languages))
+         (language (or mapped
+                       (string-remove-suffix "-mode" (symbol-name mode)))))
+    (when (string-match-p "\\`[[:alnum:]+#-]+\\'" language)
+      language)))
+
+(defun agent-shell-context--buffer-fence-language (buffer)
+  "Return the source block language to use for BUFFER."
+  (with-current-buffer buffer
+    (agent-shell-context--fence-language-for-mode major-mode)))
+
+(defun agent-shell-context--longest-backtick-run (text)
+  "Return the length of the longest consecutive backtick sequence in TEXT."
+  (let ((pos 0)
+        (max-run 0))
+    (while (string-match "`+" text pos)
+      (setq max-run (max max-run (- (match-end 0) (match-beginning 0)))
+            pos (match-end 0)))
+    max-run))
+
+(defun agent-shell-context--fenced-block (text &optional language)
+  "Return TEXT in a markdown fence with optional LANGUAGE.
+
+The fence width is widened when TEXT itself contains backtick runs, preserving
+valid markdown for snippets that include code fences."
+  (let ((fence (make-string
+                (max 3 (1+ (agent-shell-context--longest-backtick-run text)))
+                ?`)))
+    (format "%s%s\n%s\n%s"
+            fence
+            (or language "")
+            text
+            fence)))
+
 (defun agent-shell-context--format-xref-history (history-list limit project-root)
   "Format up to LIMIT items from HISTORY-LIST into a readable path.
 
@@ -292,7 +346,12 @@ under PROJECT-ROOT."
               (let ((snippet (string-trim
                               (agent-shell-context--buffer-snippet buffer))))
                 (unless (string-empty-p snippet)
-                  (push (format "### Buffer: %s\n```\n%s\n```" name snippet)
+                  (push (format "### Buffer: %s\n%s"
+                                name
+                                (agent-shell-context--fenced-block
+                                 snippet
+                                 (agent-shell-context--buffer-fence-language
+                                  buffer)))
                         context-parts)
                   (puthash name state agent-shell-context-sent-states)
                   (setq buffers-found (1+ buffers-found))
@@ -350,9 +409,7 @@ under PROJECT-ROOT."
                  (format "Files: %s"
                          (agent-shell-context-vc--stringify-list files)))
                ""
-               "```diff"
-               patch
-               "```"
+               (agent-shell-context--fenced-block patch "diff")
                "[END CONTEXT]"))
    "\n"))
 
@@ -507,9 +564,7 @@ If the region is active, it has to stay inside a single hunk body."
                (when commit-sha
                  (format "Commit-ish: %s" commit-sha))
                ""
-               "```diff"
-               patch
-               "```"
+               (agent-shell-context--fenced-block patch "diff")
                "[END CONTEXT]"))
    "\n"))
 

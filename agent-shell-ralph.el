@@ -5,7 +5,7 @@
 ;; Author: Tim Felgentreff
 ;; URL: https://github.com/timfel/agent-shell-utils
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (agent-shell "0.52.1"))
+;; Package-Requires: ((emacs "29.1") (agent-shell "0.55.1"))
 ;; Keywords: tools, convenience
 
 ;; This file is not part of GNU Emacs.
@@ -24,7 +24,6 @@
 (require 'agent-shell)
 (require 'agent-shell-utils)
 (require 'map)
-(require 'shell-maker)
 (require 'subr-x)
 
 (defcustom agent-shell-ralph-rate-limit-retry-prompt
@@ -79,6 +78,10 @@ The value is either `success' or `failure'.")
 
 (defvar-local agent-shell-ralph-rate-limit-retry-mode--subscription-token nil
   "Event subscription token for rate-limit retry mode.")
+
+(defun agent-shell-ralph--ready-p ()
+  "Return non-nil when the current `agent-shell' buffer is ready for input."
+  (eq (agent-shell-status) 'ready))
 
 (defun agent-shell-ralph--ensure-agent-shell ()
   "Fail unless the current buffer is an `agent-shell' buffer."
@@ -201,7 +204,7 @@ The value is either `success' or `failure'.")
 
 SOURCE is a short string used for status messages."
   (when (and agent-shell-ralph-mode
-             (not (shell-maker-busy)))
+             (agent-shell-ralph--ready-p))
     (let ((result (agent-shell-ralph--evaluate)))
       (setq-local agent-shell-ralph--last-result result)
       (when (agent-shell-ralph--should-inject-p result)
@@ -253,7 +256,7 @@ of each turn, the rule is evaluated.  If it matches the configured trigger,
                          agent-shell-ralph--prompt)
               (agent-shell-ralph-configure))
             (agent-shell-ralph--subscribe)
-            (when (not (shell-maker-busy))
+            (when (agent-shell-ralph--ready-p)
               (agent-shell-ralph--maybe-inject "enable")))
         (quit
          (setq agent-shell-ralph-mode nil))
@@ -284,11 +287,11 @@ of each turn, the rule is evaluated.  If it matches the configured trigger,
        (lambda (buf)
          (when (buffer-live-p buf)
            (with-current-buffer buf
-             (if (not (shell-maker-busy))
+             (if (agent-shell-ralph--ready-p)
                  (agent-shell-queue-request
                   agent-shell-ralph-rate-limit-retry-prompt)
-               (message "Agent shell %s busy again after interruption; not queuing"
-                        buf)))))
+               (message "Agent shell %s is %s after interruption; not queuing"
+                        buf (agent-shell-status))))))
        buffer))))
 
 ;;;###autoload
@@ -302,14 +305,17 @@ of each turn, the rule is evaluated.  If it matches the configured trigger,
        5
        nil
        (lambda (b)
-         (agent-shell-ralph--ensure-agent-shell)
-         (setq agent-shell-ralph-rate-limit-retry-mode--subscription-token
-               (agent-shell-subscribe-to
-                :shell-buffer buffer
-                :event 'error
-                :on-event
-                (lambda (event)
-                  (agent-shell-ralph--handle-rate-limit event buffer)))))
+         (when (buffer-live-p b)
+           (with-current-buffer b
+             (when agent-shell-ralph-rate-limit-retry-mode
+               (agent-shell-ralph--ensure-agent-shell)
+               (setq agent-shell-ralph-rate-limit-retry-mode--subscription-token
+                     (agent-shell-subscribe-to
+                      :shell-buffer b
+                      :event 'error
+                      :on-event
+                      (lambda (event)
+                        (agent-shell-ralph--handle-rate-limit event b))))))))
        (current-buffer))
     (when agent-shell-ralph-rate-limit-retry-mode--subscription-token
       (agent-shell-unsubscribe

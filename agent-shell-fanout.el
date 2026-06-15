@@ -5,7 +5,7 @@
 ;; Author: Tim Felgentreff
 ;; URL: https://github.com/timfel/agent-shell-utils
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (agent-shell "0.52.1"))
+;; Package-Requires: ((emacs "29.1") (agent-shell "0.55.1"))
 ;; Keywords: tools, convenience
 
 ;; This file is not part of GNU Emacs.
@@ -23,6 +23,8 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+
+(declare-function agent-shell--dot-subdir "agent-shell")
 
 (defcustom agent-shell-fanout-planning-request
   "Go into planning mode"
@@ -91,12 +93,9 @@ repositories from `agent-shell-fanout-adjacent-repository-names'."
 
 (defun agent-shell-fanout--worktrees-base-dir (repo-root)
   "Return the fan-out worktrees base directory for REPO-ROOT."
-  (let* ((default-directory (file-name-as-directory repo-root))
-         (transcript-dir (funcall agent-shell-transcript-file-path-function)))
-    (file-name-concat
-     (file-name-parent-directory
-      (file-name-parent-directory transcript-dir))
-     "worktrees")))
+  (let ((default-directory (file-name-as-directory repo-root))
+        (agent-shell-cwd-function (lambda () repo-root)))
+    (agent-shell--dot-subdir "worktrees")))
 
 (defun agent-shell-fanout--directory-latest-mtime (directory max-depth)
   "Return latest modification time below DIRECTORY, descending MAX-DEPTH levels."
