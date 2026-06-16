@@ -12,22 +12,197 @@
 
 ;;; Commentary:
 
-;; Local helpers around `jira.el' for querying and opening Jira issues.
+;; Local helpers around `jira.el' for querying and opening Jira issues,
+;; including `agent-shell' rendering integration for Jira issue links.
 
 ;;; Code:
 
 (require 'tabulated-list)
 (require 'tablist)
+(require 'seq)
 (require 'subr-x)
 
 (require 'jira)
 (require 'jira-utils)
 (require 'agent-shell)
+(require 'agent-shell-markdown)
 (require 'agent-shell-utils)
 (require 'agent-shell-fanout)
 
 (defvar jira-detail--current-key nil)
 (defvar jira-issues-key-summary-map)
+(defvar agent-shell-markdown-render-function)
+
+(declare-function agent-shell-markdown--open-link "agent-shell-markdown" (url))
+
+(defvar agent-shell-jira--base-markdown-render-function nil
+  "Renderer wrapped by `agent-shell-jira-render-markdown-with-links'.")
+
+(defcustom agent-shell-jira-issue-regexp "\\bGR\\(AALOS\\)?-[0-9]+\\b"
+  "Regexp matching Jira issue keys handled by `agent-shell-jira'."
+  :type 'regexp
+  :group 'agent-shell-utils)
+
+(defun agent-shell-jira--issue-key (text)
+  "Return a Jira issue key extracted from TEXT, or nil.
+
+Plain issue keys such as \"GR-123\" are accepted directly. URLs are only
+treated as Jira links when they contain both \"jira\" and a Jira issue key."
+  (when (stringp text)
+    (let ((case-fold-search t))
+      (cond
+       ((and (string-match-p "\\`https?://" text)
+             (string-match-p "jira" text)
+             (string-match agent-shell-jira-issue-regexp text))
+        (match-string 0 text))
+       ((and (string-match-p (concat "\\`" agent-shell-jira-issue-regexp "\\'") text)
+             text)
+        text)))))
+
+(defun agent-shell-jira-open-issue (text)
+  "Open the Jira issue identified by TEXT with `jira-detail-show-issue'."
+  (interactive "sJira issue or URL: ")
+  (let ((issue-key (agent-shell-jira--issue-key text)))
+    (unless issue-key
+      (user-error "No Jira issue key found in %S" text))
+    (unless (require 'jira-detail nil t)
+      (user-error "jira-detail.el is not available"))
+    (cond
+     ((fboundp 'jira-detail-show-issue)
+      (jira-detail-show-issue issue-key))
+     ((and (fboundp 'jira-api-call)
+           (fboundp 'jira-detail--issue))
+      (jira-api-call
+       "GET" (concat "issue/" issue-key)
+       :callback (lambda (data _response)
+                   (jira-detail--issue issue-key data))))
+     (t
+      (user-error "jira-detail is loaded, but no issue-opening entrypoint is available")))))
+
+(defun agent-shell-jira--ret-action-at-point ()
+  "Return the command bound to `RET' by an overlay/text keymap at point."
+  (let ((maps (delq nil
+                    (list (get-char-property (point) 'keymap)
+                          (get-text-property (point) 'keymap)
+                          (and (> (point) (point-min))
+                               (get-char-property (1- (point)) 'keymap))
+                          (and (> (point) (point-min))
+                               (get-text-property (1- (point)) 'keymap))))))
+    (seq-some (lambda (map)
+                (when (keymapp map)
+                  (let ((binding (lookup-key map (kbd "RET"))))
+                    (and binding
+                         (not (integerp binding))
+                         (commandp binding)
+                         binding))))
+              maps)))
+
+(defun agent-shell-jira-return-dwim ()
+  "Activate an actionable item at point, otherwise insert a newline."
+  (interactive)
+  (cond
+   ((button-at (point))
+    (push-button (point)))
+   ((and (> (point) (point-min))
+         (button-at (1- (point))))
+    (push-button (1- (point))))
+   ((if-let ((action (agent-shell-jira--ret-action-at-point)))
+        (progn
+          (call-interactively action)
+          t)
+      nil))
+   (t
+    (call-interactively #'newline))))
+
+(defalias 'timfel/agent-shell-return-dwim #'agent-shell-jira-return-dwim)
+
+(defun agent-shell-jira--hidden-p (pos)
+  "Return non-nil when POS is currently hidden by another overlay."
+  (get-char-property pos 'invisible))
+
+(defun agent-shell-jira--clickable-text-p (start end)
+  "Return non-nil when a clickable text property already covers START END."
+  (and (< start end)
+       (let ((pos start)
+             found)
+         (while (and (< pos end) (not found))
+           (setq found (get-char-property pos 'keymap)
+                 pos (1+ pos)))
+         found)))
+
+(defun agent-shell-jira--keymap (issue-key)
+  "Return a keymap that opens ISSUE-KEY in Jira."
+  (let ((map (make-sparse-keymap)))
+    (define-key map [mouse-1]
+                (lambda ()
+                  (interactive)
+                  (agent-shell-jira-open-issue issue-key)))
+    (define-key map (kbd "RET")
+                (lambda ()
+                  (interactive)
+                  (agent-shell-jira-open-issue issue-key)))
+    map))
+
+(defun agent-shell-jira--face-at (pos)
+  "Return a face list for a Jira link at POS that preserves styling."
+  (delete-dups
+   (append (ensure-list (get-char-property pos 'face))
+           '(link))))
+
+(defun agent-shell-jira--put-properties (start end issue-key)
+  "Attach Jira link affordances for ISSUE-KEY over START END."
+  (let ((face (agent-shell-jira--face-at start))
+        (keymap (agent-shell-jira--keymap issue-key)))
+    (add-text-properties
+     start end
+     `(face ,face
+            font-lock-face ,face
+            mouse-face highlight
+            help-echo ,(format "Open Jira issue %s" issue-key)
+            follow-link t
+            keymap ,keymap
+            agent-shell-jira-issue ,issue-key))))
+
+(defun agent-shell-jira--skip-region-p (start end)
+  "Return non-nil when Jira affordances should not be added over START END."
+  (or (agent-shell-jira--hidden-p start)
+      (get-char-property start 'agent-shell-markdown-frozen)
+      (agent-shell-jira--clickable-text-p start end)))
+
+(defun agent-shell-jira-add-link-properties-in-region (start end)
+  "Add Jira click targets across visible plain issue keys in START END."
+  (save-excursion
+    (save-restriction
+      (narrow-to-region start end)
+      (goto-char (point-min))
+      (while (re-search-forward agent-shell-jira-issue-regexp nil t)
+        (let ((match-start (match-beginning 0))
+              (match-end (match-end 0))
+              (issue-key (match-string-no-properties 0)))
+          (unless (agent-shell-jira--skip-region-p match-start match-end)
+            (agent-shell-jira--put-properties match-start match-end issue-key)))))))
+
+(defun agent-shell-jira--open-link-around (original-fn url)
+  "Open Jira-like URL via Jira package, else delegate to ORIGINAL-FN."
+  (if-let ((issue-key (agent-shell-jira--issue-key url)))
+      (agent-shell-jira-open-issue issue-key)
+    (funcall original-fn url)))
+
+(defun agent-shell-jira-render-markdown-with-links (&rest args)
+  "Render markdown with the configured base renderer, then add Jira links."
+  (unless (functionp agent-shell-jira--base-markdown-render-function)
+    (user-error "No base agent-shell markdown renderer is configured"))
+  (apply agent-shell-jira--base-markdown-render-function args)
+  (agent-shell-jira-add-link-properties-in-region (point-min) (point-max)))
+
+(defun agent-shell-jira-install-renderer ()
+  "Wrap the current `agent-shell' markdown renderer with Jira link support."
+  (unless (eq agent-shell-markdown-render-function
+              #'agent-shell-jira-render-markdown-with-links)
+    (setq agent-shell-jira--base-markdown-render-function
+          agent-shell-markdown-render-function
+          agent-shell-markdown-render-function
+          #'agent-shell-jira-render-markdown-with-links)))
 
 (defun agent-shell-jira--agent-task (issue-id issue-title prompt?)
   "Build the agent investigation task for ISSUE-ID and ISSUE-TITLE."
@@ -93,6 +268,13 @@ If no issues are marked in `*Jira Issues*', emit a message and do nothing."
                            (agent-shell-jira--agent-task issue-id issue-title prompt?))))
                  issue-ids)
          project-root)))))
+
+(unless (advice-member-p #'agent-shell-jira--open-link-around
+                         'agent-shell-markdown--open-link)
+  (advice-add 'agent-shell-markdown--open-link :around
+              #'agent-shell-jira--open-link-around))
+
+(agent-shell-jira-install-renderer)
 
 (provide 'agent-shell-jira)
 
