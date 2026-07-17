@@ -5,7 +5,7 @@
 ;; Author: Tim Felgentreff
 ;; URL: https://github.com/timfel/agent-shell-utils
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1") (agent-shell "0.55.1") (jira "2.21.0"))
+;; Package-Requires: ((emacs "29.1") (agent-shell "0.58.1") (jira "2.21.0"))
 ;; Keywords: tools, convenience
 
 ;; This file is not part of GNU Emacs.
@@ -19,6 +19,7 @@
 
 (require 'tabulated-list)
 (require 'tablist)
+(require 'map)
 (require 'seq)
 (require 'subr-x)
 
@@ -34,9 +35,6 @@
 (defvar agent-shell-markdown-render-function)
 
 (declare-function agent-shell-markdown--open-link "agent-shell-markdown" (url))
-
-(defvar agent-shell-jira--base-markdown-render-function nil
-  "Renderer wrapped by `agent-shell-jira-render-markdown-with-links'.")
 
 (defcustom agent-shell-jira-issue-regexp "\\bGR\\(AALOS\\)?-[0-9]+\\b"
   "Regexp matching Jira issue keys handled by `agent-shell-jira'."
@@ -130,6 +128,37 @@ treated as Jira links when they contain both \"jira\" and a Jira issue key."
                  pos (1+ pos)))
          found)))
 
+(defun agent-shell-jira--range-contains-p (start end range)
+  "Return non-nil when RANGE fully contains START END."
+  (and (<= (car range) start)
+       (<= end (cdr range))))
+
+(defun agent-shell-jira--markdown-avoid-ranges (context)
+  "Return Markdown regions in CONTEXT that Jira links must avoid."
+  (append
+   (mapcar (lambda (source-block)
+             (let ((block (map-elt source-block :block)))
+               (cons (map-elt block :start)
+                     (map-elt block :end))))
+           (map-elt context :source-blocks))
+   (map-elt context :inline-code-ranges)))
+
+(defun agent-shell-jira--in-markdown-link-p (start end)
+  "Return non-nil when START END is inside a Markdown link span."
+  (save-excursion
+    (goto-char (point-min))
+    (catch 'inside-link
+      (while (re-search-forward
+              (rx (optional "!") "["
+                  (one-or-more (not (any "]\n"))) "]"
+                  "("
+                  (one-or-more (not (any ")\n"))) ")")
+              nil t)
+        (when (and (<= (match-beginning 0) start)
+                   (<= end (match-end 0)))
+          (throw 'inside-link t)))
+      nil)))
+
 (defun agent-shell-jira--keymap (issue-key)
   "Return a keymap that opens ISSUE-KEY in Jira."
   (let ((map (make-sparse-keymap)))
@@ -163,14 +192,22 @@ treated as Jira links when they contain both \"jira\" and a Jira issue key."
             keymap ,keymap
             agent-shell-jira-issue ,issue-key))))
 
-(defun agent-shell-jira--skip-region-p (start end)
+(defun agent-shell-jira--skip-region-p (start end &optional avoid-ranges)
   "Return non-nil when Jira affordances should not be added over START END."
-  (or (agent-shell-jira--hidden-p start)
+  (or (seq-some (lambda (range)
+                  (agent-shell-jira--range-contains-p start end range))
+                avoid-ranges)
+      (agent-shell-jira--in-markdown-link-p start end)
+      (agent-shell-jira--hidden-p start)
       (get-char-property start 'agent-shell-markdown-frozen)
       (agent-shell-jira--clickable-text-p start end)))
 
-(defun agent-shell-jira-add-link-properties-in-region (start end)
-  "Add Jira click targets across visible plain issue keys in START END."
+(defun agent-shell-jira-add-link-properties-in-region
+    (start end &optional avoid-ranges)
+  "Add Jira click targets across visible plain issue keys in START END.
+
+AVOID-RANGES contains Markdown regions, such as code blocks and inline
+code spans, that must not receive Jira affordances."
   (save-excursion
     (save-restriction
       (narrow-to-region start end)
@@ -179,7 +216,8 @@ treated as Jira links when they contain both \"jira\" and a Jira issue key."
         (let ((match-start (match-beginning 0))
               (match-end (match-end 0))
               (issue-key (match-string-no-properties 0)))
-          (unless (agent-shell-jira--skip-region-p match-start match-end)
+          (unless (agent-shell-jira--skip-region-p
+                   match-start match-end avoid-ranges)
             (agent-shell-jira--put-properties match-start match-end issue-key)))))))
 
 (defun agent-shell-jira--open-link-around (original-fn url)
@@ -188,21 +226,27 @@ treated as Jira links when they contain both \"jira\" and a Jira issue key."
       (agent-shell-jira-open-issue issue-key)
     (funcall original-fn url)))
 
-(defun agent-shell-jira-render-markdown-with-links (&rest args)
-  "Render markdown with the configured base renderer, then add Jira links."
-  (unless (functionp agent-shell-jira--base-markdown-render-function)
-    (user-error "No base agent-shell markdown renderer is configured"))
-  (apply agent-shell-jira--base-markdown-render-function args)
-  (agent-shell-jira-add-link-properties-in-region (point-min) (point-max)))
+(defun agent-shell-jira--render-issue-links (context)
+  "Add Jira affordances during the Markdown renderer pass.
 
-(defun agent-shell-jira-install-renderer ()
-  "Wrap the current `agent-shell' markdown renderer with Jira link support."
-  (unless (eq agent-shell-markdown-render-function
-              #'agent-shell-jira-render-markdown-with-links)
-    (setq agent-shell-jira--base-markdown-render-function
-          agent-shell-markdown-render-function
-          agent-shell-markdown-render-function
-          #'agent-shell-jira-render-markdown-with-links)))
+The renderer narrows to the streaming region before calling this hook.
+CONTEXT supplies ranges for fenced blocks and inline code, which must
+remain ordinary text even when they contain Jira-looking strings."
+  (agent-shell-jira-add-link-properties-in-region
+   (point-min) (point-max)
+   (agent-shell-jira--markdown-avoid-ranges context)))
+
+(defun agent-shell-jira--render-custom-markdown-around (original-fn &rest args)
+  "Preserve Jira links for custom Markdown renderers.
+
+The normal in-place renderer runs `agent-shell-jira--render-issue-links'
+itself.  A custom renderer does not, so decorate its rendered region after
+it returns, matching the old integration path."
+  (prog1 (apply original-fn args)
+    (unless (eq agent-shell-markdown-render-function
+               #'agent-shell-markdown-replace-markup)
+      (agent-shell-jira-add-link-properties-in-region
+       (point-min) (point-max)))))
 
 (defun agent-shell-jira--agent-task (issue-id issue-title prompt?)
   "Build the agent investigation task for ISSUE-ID and ISSUE-TITLE."
@@ -274,7 +318,13 @@ If no issues are marked in `*Jira Issues*', emit a message and do nothing."
   (advice-add 'agent-shell-markdown--open-link :around
               #'agent-shell-jira--open-link-around))
 
-(agent-shell-jira-install-renderer)
+(add-hook 'agent-shell-markdown-render-functions
+          #'agent-shell-jira--render-issue-links)
+
+(unless (advice-member-p #'agent-shell-jira--render-custom-markdown-around
+                         'agent-shell--render-markdown)
+  (advice-add 'agent-shell--render-markdown :around
+              #'agent-shell-jira--render-custom-markdown-around))
 
 (provide 'agent-shell-jira)
 
