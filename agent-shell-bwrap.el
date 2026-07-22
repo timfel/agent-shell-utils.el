@@ -147,7 +147,7 @@ Set to nil to disable cleanup."
 
 (defun agent-shell-bwrap--systemd-prefix ()
   "Return the optional systemd command prefix."
-  (when (executable-find "systemd-run")
+  (when (executable-find "systemd-run" t)
     (let ((num-cpus (max 1 (min agent-shell-bwrap-cpu-limit
                                 (/ (max 1 (num-processors)) 2)))))
       (append
@@ -188,7 +188,7 @@ The prefix contains a `systemd-run' wrapper when configured and available.
 When `agent-shell-bwrap-enabled' is non-nil and `bwrap' exists, the prefix
 also creates a bubblewrap filesystem view."
   (let ((prefix (agent-shell-bwrap--systemd-prefix)))
-    (if (not (and (executable-find "bwrap") agent-shell-bwrap-enabled))
+    (if (not (and (executable-find "bwrap" t) agent-shell-bwrap-enabled))
         prefix
       (agent-shell-bwrap--cleanup-temp-dirs)
       (let* ((tmpdir (make-temp-file
