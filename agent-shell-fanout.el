@@ -260,13 +260,15 @@ minibuffer."
           ((symbolp agent-shell-preferred-agent-config)
            (seq-find
             (lambda (config)
+              (if (symbolp config)
+                  (setq config (funcall config)))
               (eq (map-elt config :identifier)
                   agent-shell-preferred-agent-config))
             agent-shell-agent-configs))
           ((listp agent-shell-preferred-agent-config)
            agent-shell-preferred-agent-config))))
     (cond
-     (config (copy-alist config))
+     (config (if (symbolp config) (funcall config) (copy-alist config)))
      (prompt
       (copy-alist (agent-shell-select-config :prompt "Agent config: ")))
      (t nil))))
