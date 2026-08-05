@@ -188,6 +188,11 @@ Useful options:
 - `agent-shell-ralph-rate-limit-retry-delay-max`
 - `agent-shell-ralph-rate-limit-message-regexp`
 
+## Agent Shell Dashboard
+
+A simple dashboard tailored to tracking agent-shells across worktrees and
+common directories and associating them with Jira issues and Bitbucket PRs.
+
 ## Minimal Setup
 
 ```elisp
