@@ -375,7 +375,7 @@ When DIRECTORY is nil, use `default-directory'."
                          (lambda (buffer initial-request)
                            (when (buffer-live-p buffer)
                              (with-current-buffer buffer
-                               (agent-shell-queue-request initial-request))))
+                               (agent-shell-prompt-queue initial-request))))
                          shell-buffer
                          (agent-shell-fanout--initial-request task))))))
                 worktree-dir

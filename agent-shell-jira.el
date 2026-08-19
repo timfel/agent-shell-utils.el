@@ -112,8 +112,6 @@ treated as Jira links when they contain both \"jira\" and a Jira issue key."
    (t
     (call-interactively #'newline))))
 
-(defalias 'timfel/agent-shell-return-dwim #'agent-shell-jira-return-dwim)
-
 (defun agent-shell-jira--hidden-p (pos)
   "Return non-nil when POS is currently hidden by another overlay."
   (get-char-property pos 'invisible))

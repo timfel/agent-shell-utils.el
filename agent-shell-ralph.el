@@ -208,7 +208,7 @@ SOURCE is a short string used for status messages."
     (let ((result (agent-shell-ralph--evaluate)))
       (setq-local agent-shell-ralph--last-result result)
       (when (agent-shell-ralph--should-inject-p result)
-        (agent-shell-queue-request agent-shell-ralph--prompt)
+        (agent-shell-prompt-queue agent-shell-ralph--prompt)
         (message "agent-shell ralph queued in %s (%s: %s)"
                  (buffer-name)
                  (or source "manual")
@@ -244,7 +244,7 @@ SOURCE is a short string used for status messages."
 
 When enabled, the current buffer stores a single continuation rule.  At the end
 of each turn, the rule is evaluated.  If it matches the configured trigger,
-`agent-shell-queue-request' is called with the configured prompt."
+`agent-shell-prompt-queue' is called with the configured prompt."
   :lighter " Ralph"
   :group 'agent-shell-utils
   (if agent-shell-ralph-mode
@@ -288,7 +288,7 @@ of each turn, the rule is evaluated.  If it matches the configured trigger,
          (when (buffer-live-p buf)
            (with-current-buffer buf
              (if (agent-shell-ralph--ready-p)
-                 (agent-shell-queue-request
+                 (agent-shell-prompt-queue
                   agent-shell-ralph-rate-limit-retry-prompt)
                (message "Agent shell %s is %s after interruption; not queuing"
                         buf (agent-shell-status))))))
