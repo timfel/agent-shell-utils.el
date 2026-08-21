@@ -235,7 +235,7 @@ and is not currently used by an `agent-shell' buffer, return it for reuse."
          (base-ref (agent-shell-fanout--worktree-base-ref repo-root)))
     (unless base-ref
       (user-error "Could not find a usable base ref in %s" repo-root))
-    (when-let ((created-worktrees
+    (when-let* ((created-worktrees
                 (agent-shell-fanout--worktrees-create-with-suffix
                  repo-roots base-dir slug nil base-ref)))
       (cdr (car created-worktrees)))))
@@ -361,7 +361,7 @@ When DIRECTORY is nil, use `default-directory'."
                          (or session-strategy 'new))
                         (agent-shell-cwd-function
                          (lambda () worktree-dir)))
-                    (when-let ((shell-buffer
+                    (when-let* ((shell-buffer
                                 (agent-shell-start :config config)))
                       (run-with-timer
                        3 nil

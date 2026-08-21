@@ -104,7 +104,7 @@ treated as Jira links when they contain both \"jira\" and a Jira issue key."
    ((and (> (point) (point-min))
          (button-at (1- (point))))
     (push-button (1- (point))))
-   ((if-let ((action (agent-shell-jira--ret-action-at-point)))
+   ((if-let* ((action (agent-shell-jira--ret-action-at-point)))
         (progn
           (call-interactively action)
           t)
@@ -220,7 +220,7 @@ code spans, that must not receive Jira affordances."
 
 (defun agent-shell-jira--open-link-around (original-fn url)
   "Open Jira-like URL via Jira package, else delegate to ORIGINAL-FN."
-  (if-let ((issue-key (agent-shell-jira--issue-key url)))
+  (if-let* ((issue-key (agent-shell-jira--issue-key url)))
       (agent-shell-jira-open-issue issue-key)
     (funcall original-fn url)))
 
