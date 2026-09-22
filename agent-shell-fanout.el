@@ -281,27 +281,6 @@ minibuffer."
        "-")
     title-or-dir))
 
-(defun agent-shell-fanout--apply-dir-locals (buffer worktree-parent)
-  "Apply dir-local variables for BUFFER and persist WORKTREE-PARENT."
-  (when (buffer-live-p buffer)
-    (with-current-buffer buffer
-      (hack-dir-local-variables-non-file-buffer)
-      (unless (local-variable-p 'agent-shell-fanout-worktree-parent)
-        (add-dir-local-variable
-         'agent-shell-mode 'agent-shell-fanout-worktree-parent
-         worktree-parent
-         (expand-file-name dir-locals-file worktree-parent))
-        (when (and (buffer-file-name)
-                   (string-suffix-p dir-locals-file (buffer-file-name)))
-          (save-buffer)
-          (kill-buffer))
-        (add-to-list 'safe-local-variable-values
-                     (cons 'agent-shell-fanout-worktree-parent
-                           worktree-parent))
-        (when (buffer-live-p buffer)
-          (with-current-buffer buffer
-            (hack-dir-local-variables-non-file-buffer)))))))
-
 ;;;###autoload
 (defun agent-shell-fanout-worktrees
     (task-specs &optional directory session-strategy)
@@ -363,12 +342,6 @@ When DIRECTORY is nil, use `default-directory'."
                          (lambda () worktree-dir)))
                     (when-let* ((shell-buffer
                                 (agent-shell-start :config config)))
-                      (run-with-timer
-                       3 nil
-                       #'agent-shell-fanout--apply-dir-locals
-                       shell-buffer
-                       (file-name-parent-directory
-                        (directory-file-name worktree-dir)))
                       (when task
                         (run-with-timer
                          (+ 3 (random 4)) nil
@@ -385,19 +358,6 @@ When DIRECTORY is nil, use `default-directory'."
                         prev-transcripts)
                     nil
                   task))))))
-
-;;;###autoload
-(defun agent-shell-fanout-cleanup-worktree ()
-  "Delete the current fan-out worktree parent after confirmation."
-  (interactive)
-  (let ((worktree-parent nil))
-    (when (or (boundp 'agent-shell-fanout-worktree-parent)
-              (local-variable-p 'agent-shell-fanout-worktree-parent))
-      (setq worktree-parent agent-shell-fanout-worktree-parent))
-    (when (and worktree-parent
-               (yes-or-no-p (format "Delete %s? " worktree-parent)))
-      (kill-buffer)
-      (delete-directory worktree-parent t nil))))
 
 (provide 'agent-shell-fanout)
 
