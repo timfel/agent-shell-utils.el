@@ -5,8 +5,8 @@ Small optional utilities for
 
 The package is split into separately loadable features:
 
-- `agent-shell-bwrap.el`: run agent commands through `systemd-run` and
-  `bwrap`.
+- `agent-shell-nono.el`: launch agents with a selected nono JSON profile
+  and optional `systemd-run` resource limits.
 - `agent-shell-context.el`: add context sources for recent Emacs buffers,
   built-in VC diffs, and Magit diffs.
 - `agent-shell-fanout.el`: start or resume multiple `agent-shell` sessions,
@@ -48,31 +48,128 @@ With straight.el:
    :repo "timfel/agent-shell-utils"))
 ```
 
-## Bubblewrap
+## Nono sandbox profiles
+
+Install nono using mise. In your global `mise.toml`:
+
+```toml
+[tools]
+nono = { version = "0.78.0", os = ["linux", "macos"] }
+```
+
+Then run `mise install nono` and ensure `nono` is on Emacs's `exec-path`.
+The version is pinned to the release used for the integration tests.
+On Linux, optionally install your distribution's `bubblewrap` package for
+a private `/tmp` mount. Like `systemd-run`, `bwrap` is used when available.
 
 Enable globally:
 
 ```elisp
-(use-package agent-shell-bwrap
+(use-package agent-shell-nono
   :after agent-shell
   :config
-  (agent-shell-bwrap-mode 1))
+  (agent-shell-nono-mode 1))
 ```
 
 Or configure `agent-shell` directly:
 
 ```elisp
-(require 'agent-shell-bwrap)
-(setq agent-shell-command-prefix #'agent-shell-bwrap-command-prefix)
+(require 'agent-shell-nono)
+(setq agent-shell-command-prefix #'agent-shell-nono-command-prefix)
 ```
 
-Useful options:
+Use **`M-x agent-shell-nono-select-profile`** to select the default for new
+agent buffers. Existing buffers retain their selected profile path. Nono
+reads that file at each launch, so editing a profile changes subsequent
+launches using it, not processes already running.
 
-- `agent-shell-bwrap-write-dirs`
-- `agent-shell-bwrap-read-dirs`
-- `agent-shell-bwrap-hidden-dirs`
-- `agent-shell-bwrap-extra-write-files`
-- `agent-shell-bwrap-use-systemd-run`
+Create your profiles in `~/.emacs.d/nono/`, or set
+`agent-shell-nono-profile-directory` to another directory. The initial
+selection is `developer.json`; set `agent-shell-nono-profile` to use a
+different filename. See [nono's profile documentation](https://nono.sh/docs/cli/features/profile-authoring)
+for policy configuration and inheritance.
+
+```sh
+nono profile validate ~/.emacs.d/nono/developer.json
+nono profile show ~/.emacs.d/nono/developer.json
+```
+
+Missing nono or a missing profile is an error, never an automatic
+unsandboxed fallback. `--allow-cwd` acknowledges the workspace access
+specified in the profile without prompting on ACP's standard input.
+
+The agent buffer's `default-directory` is passed as `--workdir`, so profile
+paths such as `$WORKDIR/../graal` refer to siblings of that directory, not
+of the JSON file. Git worktrees may also need an explicit grant for their
+shared Git metadata outside the workspace.
+
+### Private temporary files on Linux
+
+When `bwrap` is available, every sandboxed local Linux launch gets a fresh
+tmpfs mounted at `/tmp`, with mode `1777`. The launcher sets `TMPDIR`, `TMP`
+and `TEMP` to `/tmp`. Host `/tmp` contents are hidden, and temporary data
+disappears when the session's processes exit. Other platforms are unchanged;
+remote launches are not wrapped.
+
+Without `bwrap`, the launcher reports that temporary directories remain
+host-backed and runs nono without the mount wrapper. Nono still enforces
+the selected profile; the temporary-directory environment is left unchanged.
+
+The launch order is:
+
+```text
+systemd-run (if available) → bwrap (if available, Linux) → nono → agent
+```
+
+The mount is created **before** nono applies filesystem permissions.
+Your profile must allow the temporary-file operations you need. For a
+profile that excludes nono's default temporary-directory grants, add this
+Linux-only entry to `filesystem.allow`:
+
+```json
+{ "path": "/tmp", "when": "linux" }
+```
+
+With the wrapper, this grants access to the private mount. **Without
+bubblewrap, the same grant permits access to the host's `/tmp`.** It does
+not require enabling broader host-temp grants. `/var/tmp` and the home
+directory are not replaced. Tmpfs memory is charged to the systemd scope
+when systemd resource limits are available.
+
+When using bubblewrap, keep the nono executable, selected profile and
+workspace outside `/tmp`, including symlink targets: the launcher rejects
+paths that the mount would hide. If an installed wrapper fails at runtime,
+the launch fails rather than retrying without it.
+
+### Launcher options
+
+- `agent-shell-nono-profile-directory`
+- `agent-shell-nono-profile`
+- `agent-shell-nono-enabled` (explicitly setting nil disables sandboxing)
+- `agent-shell-nono-cpu-limit`
+- `agent-shell-nono-memory-limit-gb`
+- `agent-shell-nono-memory-fraction`
+
+Resource limits are applied through `systemd-run --user --scope` when it
+is available. No resource-limit guarantee is made on systems without it.
+Live sessions are not reconfigured by loading this module.
+
+### Tests
+
+With agent-shell installed in Emacs's normal package directory:
+
+```sh
+emacs -Q --batch \
+  --eval '(progn (require (quote package)) (package-initialize))' \
+  -L . -l tests/agent-shell-nono-tests.el -f ert-run-tests-batch-and-exit
+```
+
+Set `AGENT_SHELL_NONO_TEST_BINARY` to an absolute nono executable path to
+also test profile validation and ACP stdin/stdout with temporary test
+configuration and an isolated HOME. Linux integration tests also verify
+that `/tmp` is writable tmpfs, hides host files, and starts fresh on each
+launch. The test executable and fixtures must be outside `/tmp`. Tests do
+not use your personal profiles or make external network requests.
 
 ## Context Sources
 
@@ -196,10 +293,10 @@ common directories and associating them with Jira issues and Bitbucket PRs.
 ## Minimal Setup
 
 ```elisp
-(use-package agent-shell-bwrap
+(use-package agent-shell-nono
   :after agent-shell
   :config
-  (agent-shell-bwrap-mode 1))
+  (agent-shell-nono-mode 1))
 
 (use-package agent-shell-context
   :after agent-shell
