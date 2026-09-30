@@ -208,12 +208,15 @@ also creates a bubblewrap filesystem view."
                             ((eq m 'w) (list "--bind" (file-truename p) p))
                             ((eq m 'r) (list "--ro-bind" (file-truename p) p))
                             (t (list "--tmpfs" p)))))))
+         (mapcan
+          (lambda (e)
+            (if-let ((p (getenv e)))
+                `("--setenv" ,e ,p)
+              '()))
+          '("HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY"))
          `("--proc" "/proc"
            "--dev" "/dev"
            "--chdir" ,default-directory
-           "--setenv" "HTTP_PROXY" ,(or (getenv "HTTP_PROXY") "''")
-           "--setenv" "HTTPS_PROXY" ,(or (getenv "HTTPS_PROXY") "''")
-           "--setenv" "NO_PROXY" ,(or (getenv "NO_PROXY") "''")
            "--setenv" "HOME" ,(getenv "HOME")
            "--setenv" "TMPDIR" ,tmpdir
            "--setenv" "XDG_CACHE_INNER" ,(expand-file-name ".agent-shell/xdgcache")
