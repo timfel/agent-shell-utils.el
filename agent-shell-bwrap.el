@@ -60,6 +60,7 @@ Set to nil to disable cleanup."
     ("~/.cline" . w)
     ("~/.codex" . w)
     ("~/.config/goose" . w)
+    ("~/.config/opencode" . w)
     ("~/.local/share/goose" . w)
     ("~/.local/state/goose" . w)
     ("~/.local/share/opencode" . w)
@@ -84,11 +85,6 @@ Set to nil to disable cleanup."
     ("../graal-enterprise" . w)
     ("../ci-overlays" . w)
     ("../mx" . w)
-
-    ;; ("~/.codex/config.toml" . w)
-    ;; ("~/.config/goose/config.yaml" . w)
-    ;; ("~/.config/goose/adversary.md" . w)
-    ;; ("~/.config/opencode/opencode.jsonc" . w)
 
     ("~/.agents" . r)
     ("~/.bun" . r)
