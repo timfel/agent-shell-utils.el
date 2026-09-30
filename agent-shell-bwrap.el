@@ -83,6 +83,7 @@ Set to nil to disable cleanup."
     ("../graalos-image-builder" . w)
     ("../graal-enterprise" . w)
     ("../ci-overlays" . w)
+    ("../mx" . w)
 
     ;; ("~/.codex/config.toml" . w)
     ;; ("~/.config/goose/config.yaml" . w)
