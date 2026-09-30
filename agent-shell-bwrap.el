@@ -186,43 +186,37 @@ also creates a bubblewrap filesystem view."
     (if (not (and (executable-find "bwrap" t) agent-shell-bwrap-enabled))
         prefix
       (agent-shell-bwrap--cleanup-temp-dirs)
-      (let* ((tmpdir (make-temp-file
-                      agent-shell-bwrap-temp-prefix t
-                      (replace-regexp-in-string
-                       "[^[:alnum:]]" ""
-                       (or default-directory "agent-shell")))))
-        (append
-         prefix
-         `("bwrap" "--die-with-parent" "--new-session"
-           "--ro-bind" "/" "/"
-           "--tmpfs" "/tmp"
-           "--tmpfs" ,(getenv "HOME"))
-         (thread-last
-           (seq-map (lambda (e) (cons (expand-file-name (car e)) (cdr e))) agent-shell-bwrap-dirs)
-           (seq-sort (lambda (e1 e2) (string-lessp (car e1) (car e2))))
-           (seq-filter (lambda (e) (file-exists-p (car e))))
-           (seq-mapcat (lambda (e)
-                         (let ((p (car e))
-                               (m (cdr e)))
-                           (cond
-                            ((eq m 'w) (list "--bind" (file-truename p) p))
-                            ((eq m 'r) (list "--ro-bind" (file-truename p) p))
-                            (t (list "--tmpfs" p)))))))
-         (mapcan
-          (lambda (e)
-            (if-let ((p (getenv e)))
-                `("--setenv" ,e ,p)
-              '()))
-          '("HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY"))
-         `("--proc" "/proc"
-           "--dev" "/dev"
-           "--chdir" ,default-directory
-           "--setenv" "HOME" ,(getenv "HOME")
-           "--setenv" "TMPDIR" ,tmpdir
-           "--setenv" "XDG_CACHE_INNER" ,(expand-file-name ".agent-shell/xdgcache")
-           "--setenv" "XDG_STATE_INNER" ,(expand-file-name ".agent-shell/xdgstate")
-           "--setenv" "XDG_RUNTIME_INNER" ,(expand-file-name ".agent-shell/xdgruntime")
-           "--"))))))
+      (append
+       prefix
+       `("bwrap" "--die-with-parent" "--new-session"
+         "--ro-bind" "/" "/"
+         "--tmpfs" "/tmp"
+         "--tmpfs" ,(getenv "HOME"))
+       (thread-last
+         (seq-map (lambda (e) (cons (expand-file-name (car e)) (cdr e))) agent-shell-bwrap-dirs)
+         (seq-sort (lambda (e1 e2) (string-lessp (car e1) (car e2))))
+         (seq-filter (lambda (e) (file-exists-p (car e))))
+         (seq-mapcat (lambda (e)
+                       (let ((p (car e))
+                             (m (cdr e)))
+                         (cond
+                          ((eq m 'w) (list "--bind" (file-truename p) p))
+                          ((eq m 'r) (list "--ro-bind" (file-truename p) p))
+                          (t (list "--tmpfs" p)))))))
+       (mapcan
+        (lambda (e)
+          (if-let ((p (getenv e)))
+              `("--setenv" ,e ,p)
+            '()))
+        '("HTTP_PROXY" "HTTPS_PROXY" "NO_PROXY"))
+       `("--proc" "/proc"
+         "--dev" "/dev"
+         "--chdir" ,default-directory
+         "--setenv" "HOME" ,(getenv "HOME")
+         "--setenv" "XDG_CACHE_INNER" ,(expand-file-name ".agent-shell/xdgcache")
+         "--setenv" "XDG_STATE_INNER" ,(expand-file-name ".agent-shell/xdgstate")
+         "--setenv" "XDG_RUNTIME_INNER" ,(expand-file-name ".agent-shell/xdgruntime")
+         "--")))))
 
 ;;;###autoload
 (define-minor-mode agent-shell-bwrap-mode
