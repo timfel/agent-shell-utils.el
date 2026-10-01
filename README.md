@@ -141,6 +141,32 @@ workspace outside `/tmp`, including symlink targets: the launcher rejects
 paths that the mount would hide. If an installed wrapper fails at runtime,
 the launch fails rather than retrying without it.
 
+### SSH-agent startup on Linux
+
+For profiles listed in `agent-shell-nono-ssh-agent-profiles` (initially
+`developer.json` and `containers.json`), the launcher starts a host-side
+`ssh-agent` on demand at `$XDG_RUNTIME_DIR/agent-shell-ssh/agent.sock`.
+It reuses an existing agent there and loads `agent-shell-nono-ssh-agent-keys`
+(initially `~/.ssh/id_ed25519`) only when the agent is empty. No SSH systemd
+service is required. An agent started by Emacs normally exits with Emacs.
+
+The profiles must independently grant that socket and set `SSH_AUTH_SOCK`
+to it, along with any required read-only `known_hosts` access. The launcher
+does not grant filesystem access, inspect profile inheritance or change
+Emacs's `SSH_AUTH_SOCK`. Add derived profiles to the startup list explicitly.
+Remote, non-Linux and unsandboxed launches skip SSH-agent startup.
+
+Loaded keys are generic, **not destination-constrained**: access to this
+socket confers their authentication/signing authority wherever accepted,
+without exposing private-key files to the sandbox. Use only trusted agents.
+The runtime and socket directories must be private and user-owned, outside
+`/tmp`. An unresponsive existing socket is an error, not automatically deleted.
+
+Loading is noninteractive. Encrypted keys must be unlocked from a host terminal
+using `SSH_AUTH_SOCK="$XDG_RUNTIME_DIR/agent-shell-ssh/agent.sock" ssh-add`;
+then retry the launch. Set `agent-shell-nono-ssh-agent-keys` to nil for entirely
+manual loading, or the profiles list to nil to disable automatic startup.
+
 ### Launcher options
 
 - `agent-shell-nono-profile-directory`
@@ -149,6 +175,8 @@ the launch fails rather than retrying without it.
 - `agent-shell-nono-cpu-limit`
 - `agent-shell-nono-memory-limit-gb`
 - `agent-shell-nono-memory-fraction`
+- `agent-shell-nono-ssh-agent-profiles`
+- `agent-shell-nono-ssh-agent-keys`
 
 Resource limits are applied through `systemd-run --user --scope` when it
 is available. No resource-limit guarantee is made on systems without it.
@@ -164,12 +192,12 @@ emacs -Q --batch \
   -L . -l tests/agent-shell-nono-tests.el -f ert-run-tests-batch-and-exit
 ```
 
-Set `AGENT_SHELL_NONO_TEST_BINARY` to an absolute nono executable path to
-also test profile validation and ACP stdin/stdout with temporary test
-configuration and an isolated HOME. Linux integration tests also verify
-that `/tmp` is writable tmpfs, hides host files, and starts fresh on each
-launch. The test executable and fixtures must be outside `/tmp`. Tests do
-not use your personal profiles or make external network requests.
+Tests include a disposable SSH key and a real host-side SSH agent when
+OpenSSH is installed on Linux. They verify lazy startup, reuse, empty-agent
+reload, noninteractive encrypted-key failure, and profile/platform gating.
+They do not load your personal keys or make external network requests.
+The profile smoke tests in the Emacs configuration repository separately
+verify sandbox permissions and private `/tmp` socket access.
 
 ## Context Sources
 

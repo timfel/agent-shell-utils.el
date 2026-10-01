@@ -14,7 +14,9 @@
 
 ;; Launch agents using nono JSON profiles, optionally within a systemd
 ;; resource-limited scope.  Linux sessions get a private tmpfs /tmp when
-;; bubblewrap is available.  Select a profile for new sessions with
+;; bubblewrap is available.  SSH-enabled profiles lazily start a shared,
+;; host-side SSH agent; no SSH systemd service is needed.
+;; Select a profile for new sessions with
 ;; `agent-shell-nono-select-profile' and enable `agent-shell-nono-mode'.
 
 ;;; Code:
@@ -60,6 +62,28 @@ optional systemd resource limits."
   "Fraction of host memory to request through systemd."
   :type 'number
   :group 'agent-shell-utils)
+
+(defcustom agent-shell-nono-ssh-agent-profiles '("developer.json" "containers.json")
+  "Profile filenames whose local Linux launches need the managed SSH agent.
+These profiles must grant and set SSH_AUTH_SOCK to
+$XDG_RUNTIME_DIR/agent-shell-ssh/agent.sock.  This list does not grant any
+sandbox permissions.  Add derived profiles explicitly; nil disables
+automatic SSH-agent startup.  Remote and unsandboxed launches are skipped."
+  :type '(repeat string)
+  :group 'agent-shell-utils)
+
+(defcustom agent-shell-nono-ssh-agent-keys '("~/.ssh/id_ed25519")
+  "Private key files to load on the host when the managed SSH agent is empty.
+Keys are not destination-constrained: sandboxed clients can authenticate
+anywhere a loaded key is accepted.  Private-key files need not be readable
+inside the sandbox.  Set nil to load keys manually with ssh-add instead.
+Encrypted keys must be unlocked on the host; startup never prompts for a
+passphrase on the agent's ACP connection."
+  :type '(repeat file)
+  :group 'agent-shell-utils)
+
+(defvar agent-shell-nono--ssh-agent-process nil
+  "SSH-agent process started by this Emacs, if any.")
 
 (defvar-local agent-shell-nono--session-profile nil
   "Absolute nono profile path selected for this agent buffer.")
@@ -138,6 +162,84 @@ exposing any part of the host's /tmp inside it."
       (message "Bubblewrap not found; nono will use the host's temporary directories")
       nil)))
 
+(defun agent-shell-nono--ssh-agent-socket ()
+  "Return the managed socket path, checking its private runtime directory."
+  (let* ((runtime (getenv "XDG_RUNTIME_DIR"))
+         (directory (and runtime (expand-file-name "agent-shell-ssh" runtime))))
+    (unless (and runtime (file-name-absolute-p runtime)
+                 (file-directory-p runtime)
+                 (not (file-remote-p runtime))
+                 (not (string-prefix-p "/tmp/" (file-name-as-directory
+                                                (file-truename runtime)))))
+      (user-error "Managed SSH agent needs XDG_RUNTIME_DIR outside /tmp"))
+    (dolist (path (list runtime directory))
+      (unless (file-exists-p path)
+        (make-directory path)
+        (set-file-modes path #o700))
+      (let ((attrs (file-attributes path)))
+        (unless (and (eq t (file-attribute-type attrs))
+                     (eql (file-attribute-user-id attrs) (user-uid))
+                     (zerop (logand #o077 (file-modes path))))
+          (user-error "SSH-agent directory must be owned by you with mode 0700: %s" path))))
+    (expand-file-name "agent.sock" directory)))
+
+(defun agent-shell-nono--ssh-agent-status (ssh-add)
+  "Probe the current SSH_AUTH_SOCK with SSH-ADD.
+Return 0 for loaded identities, 1 for an empty agent, or 2 if unreachable."
+  (call-process ssh-add nil nil nil "-l"))
+
+(defun agent-shell-nono--ensure-ssh-agent ()
+  "Start or reuse a host SSH agent and load keys if it is empty.
+The socket survives the sandbox's private /tmp mount.  The process started
+here belongs to Emacs, not to an agent sandbox or systemd service."
+  (let* ((socket (agent-shell-nono--ssh-agent-socket))
+         ;; Do not resolve or run SSH tools in an untrusted workspace.
+         (default-directory (expand-file-name "~/"))
+         (ssh-add (or (executable-find "ssh-add")
+                      (user-error "OpenSSH ssh-add is required")))
+         (process-environment (copy-sequence process-environment)))
+    (setenv "SSH_AUTH_SOCK" socket)
+    ;; Force a noninteractive refusal even when Emacs has a controlling TTY.
+    (setenv "SSH_ASKPASS_REQUIRE" "force")
+    (setenv "SSH_ASKPASS" "/bin/false")
+    (let ((status (agent-shell-nono--ssh-agent-status ssh-add)))
+      (unless (memq status '(0 1))
+        ;; Never replace an unexpected file, symlink, or unresponsive agent.
+        (when (or (file-exists-p socket) (file-symlink-p socket))
+          (user-error "SSH-agent socket is unresponsive; inspect/remove it on the host: %s" socket))
+        (let ((ssh-agent (or (executable-find "ssh-agent")
+                             (user-error "OpenSSH ssh-agent is required")))
+              process ready)
+          (with-temp-buffer
+            (unwind-protect
+                (progn
+                  (setq process (make-process
+                                 :name "agent-shell-ssh-agent" :buffer (current-buffer)
+                                 :command (list ssh-agent "-D" "-a" socket "-P" "")
+                                 :connection-type 'pipe :noquery t :sentinel #'ignore))
+                  (let ((deadline (+ (float-time) 3)))
+                    (while (and (process-live-p process)
+                                (not (memq status '(0 1)))
+                                (< (float-time) deadline))
+                      (accept-process-output process 0.05)
+                      (setq status (agent-shell-nono--ssh-agent-status ssh-add))))
+                  (unless (memq status '(0 1))
+                    (user-error "Could not start SSH agent: %s" (string-trim (buffer-string))))
+                  ;; Killing the startup log buffer must not kill the agent.
+                  (set-process-buffer process nil)
+                  (setq ready t
+                        agent-shell-nono--ssh-agent-process process))
+              (unless ready
+                (when (and process (process-live-p process))
+                  (delete-process process)))))))
+      (when (and (eq status 1) agent-shell-nono-ssh-agent-keys)
+        (with-temp-buffer
+          (unless (eq 0 (apply #'call-process ssh-add nil (current-buffer) nil
+                               (mapcar #'expand-file-name agent-shell-nono-ssh-agent-keys)))
+            (user-error "Could not load SSH keys (%s).  Unlock on the host with SSH_AUTH_SOCK=%s ssh-add, or customize agent-shell-nono-ssh-agent-keys"
+                        (string-trim (buffer-string)) (shell-quote-argument socket))))))
+    socket))
+
 ;;;###autoload
 (defun agent-shell-nono-command-prefix (buffer)
   "Return a nono launch prefix for agent BUFFER, with optional systemd limits.
@@ -160,6 +262,10 @@ Nono validates and enforces the selected JSON policy in either case."
             (unless (and (file-regular-p profile) (file-readable-p profile))
               (user-error "Nono session profile is missing or unreadable: %s" profile))
             (let ((mount-prefix (agent-shell-nono--tmpfs-prefix nono profile)))
+              (when (and (eq system-type 'gnu/linux)
+                         (member (file-name-nondirectory profile)
+                                 agent-shell-nono-ssh-agent-profiles))
+                (agent-shell-nono--ensure-ssh-agent))
               (setq agent-shell-nono--session-profile profile)
               (append prefix mount-prefix
                       (list nono "--silent" "run" "--profile" profile
