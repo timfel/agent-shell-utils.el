@@ -399,6 +399,7 @@ The socket lives outside the sandbox policy.  A reachable agent
 already configured in the environment is reused as-is; otherwise a
 dedicated Emacs-managed agent is started.  The process started here
 belongs to Emacs, not to an agent sandbox or systemd service."
+  (cl-block agent-shell-nono--ensure-ssh-agent
   (let ((default-directory (expand-file-name "~/")))
     ;; Reuse an existing agent that is reachable and has identities.
     (when (and agent-shell-nono-reuse-existing-ssh-agent
@@ -453,7 +454,7 @@ belongs to Emacs, not to an agent sandbox or systemd service."
                                (mapcar #'expand-file-name agent-shell-nono-ssh-agent-keys)))
             (user-error "Could not load SSH keys (%s).  Unlock on the host with SSH_AUTH_SOCK=%s ssh-add, or customize agent-shell-nono-ssh-agent-keys"
                         (string-trim (buffer-string)) (shell-quote-argument socket))))))
-    socket))
+    socket)))
 
 ;;; Approval webhook server.
 ;;
