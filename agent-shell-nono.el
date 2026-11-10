@@ -590,7 +590,7 @@ belongs to Emacs, not to an agent sandbox or systemd service."
            ((agent-shell-nono--remembered-p buffer path access) ?a)
            (t
             (with-current-buffer buffer
-              (when-let ((window (get-buffer-window buffer 'visible)))
+              (when-let* ((window (get-buffer-window buffer 'visible)))
                 (select-window window 'norecord))
               (ding)
               (read-char-from-minibuffer
@@ -635,14 +635,15 @@ belongs to Emacs, not to an agent sandbox or systemd service."
     (when (file-directory-p dir)
       (dolist (file (directory-files dir t "agent-shell-.*\\.json\\'"))
         (let ((age (- (float-time)
-                      (file-attribute-modification-time
-                       (file-attributes file)))))
+                      (float-time
+                       (file-attribute-modification-time
+                        (file-attributes file))))))
           (when (> age (* 7 24 3600))
             (ignore-errors (delete-file file))))))))
 
 (defun agent-shell-nono--remembered-grants ()
   "Turn remembered approvals into profile filesystem list entries."
-  (let (allow read read-file write write-file)
+  (let ((allow nil) (read nil) (read-file nil) (write nil) (write-file nil))
     (dolist (pair agent-shell-nono--remembered-approvals)
       (let ((path (car pair))
             (is-write (equal (cdr pair) "write")))
@@ -787,7 +788,7 @@ left unwrapped.  A missing nono binary is an error."
                  "--allow-cwd")
            (when (agent-shell-nono--native-linux-p)
              (append
-              (when-let ((memory (agent-shell-nono--memory-arg)))
+              (when-let* ((memory (agent-shell-nono--memory-arg)))
                 (list "--memory" memory))
               (when agent-shell-nono-max-processes
                 (list "--max-processes"
