@@ -20,16 +20,24 @@
 ;; The profile extends nono's built-in `default' profile and is
 ;; assembled from the customizations below.
 ;;
-;; Resource limits are enforced by nono itself via cgroup v2 (Linux):
+;; Resource limits are enforced OUTSIDE nono, via a transient
+;; `systemd-run --user --scope' wrapper (Linux), because the two
+;; mechanisms cannot mix:
 ;;
-;;   * Memory: `agent-shell-nono-memory-limit-gb' is passed to nono as
-;;     --memory.  nono refuses to run rather than leave a requested
-;;     limit unenforced.
-;;   * Process count: `agent-shell-nono-max-processes' maps to
-;;     nono's --max-processes.  Note: nono has no CPU-quota facility
-;;     (no equivalent of systemd's CPUQuota exists in nono), so CPU
-;;     throttling is not available; the process-count cap is the only
-;;     CPU-adjacent control nono enforces.
+;;   * When nono is given --memory or --max-processes it relocates the
+;;     sandboxed tree into its own leaf cgroup directly under
+;;     user@<uid>.service (see nono resource-limits docs), escaping any
+;;     enclosing systemd scope, so outer systemd limits would not apply.
+;;   * nono has no CPU-quota facility at all, and its --max-processes
+;;     maps to pids.max which counts threads too - too coarse a knob
+;;     for an agent stack of node + pi + forked tools.
+;;
+;; So nono gets no resource flags and stays inside the scope, where:
+;;
+;;   * `agent-shell-nono-cpu-limit' becomes CPUQuota (in whole CPUs).
+;;   * `agent-shell-nono-memory-limit-gb' (bounded by
+;;     `agent-shell-nono-memory-fraction' of host memory) becomes
+;;     MemoryMax with MemorySwapMax=0, so the cap cannot spill to swap.
 ;;
 ;; Filesystem policy grants read-only access to system-wide tool
 ;; locations (`agent-shell-nono-system-read-paths': /usr, /bin, /etc
@@ -80,7 +88,7 @@ buffers die or Emacs restarts."
   :group 'agent-shell-utils)
 
 (defcustom agent-shell-nono-memory-limit-gb 32
-  "Maximum memory, in GiB, passed to nono via --memory.
+  "Maximum memory, in GiB, enforced via systemd-run MemoryMax.
 The effective cap is the smaller of this value and
 `agent-shell-nono-memory-fraction' of total host memory.  Linux only;
 nil disables the memory cap."
@@ -92,14 +100,12 @@ nil disables the memory cap."
   :type 'number
   :group 'agent-shell-utils)
 
-(defcustom agent-shell-nono-max-processes 128
-  "Task (process + thread) cap passed to nono via --max-processes.
-At the cap the kernel refuses new forks instead of killing the sandbox.
-Note this counts threads too: an idle pi-acp session (node plus pi)
-already consumes around fifteen tasks, and agents fork shells, git,
-and rg constantly, so low hundreds is the realistic floor.
-nono has no CPU-quota facility; this is its process-side resource cap.
-nil disables the limit."
+(defcustom agent-shell-nono-cpu-limit 4
+  "CPU quota for agent sandboxes, in whole CPUs, via systemd-run.
+4 means 400% CPUQuota, i.e. as much CPU as four fully busy cores.
+Applied as CPUQuota on a transient systemd scope that wraps the whole
+nono invocation; requires a systemd user session on Linux.  nil
+disables CPU throttling."
   :type '(choice (const :tag "No limit" nil) integer)
   :group 'agent-shell-utils)
 
@@ -359,7 +365,7 @@ Included in the generated profile on subsequent launches.")
        (agent-shell-nono--native-linux-p)))
 
 (defun agent-shell-nono--memory-arg ()
-  "Return a --memory size string such as \"12G\", or nil."
+  "Return a systemd MemoryMax size string such as \"12G\", or nil."
   (when-let* ((limit agent-shell-nono-memory-limit-gb)
               (total-kib (ignore-errors (car (memory-info))))
               (total-gib (/ total-kib 1024.0 1024.0))
@@ -367,6 +373,28 @@ Included in the generated profile on subsequent launches.")
                                   (floor (* agent-shell-nono-memory-fraction
                                             total-gib))))))
     (format "%dG" capped)))
+
+(defun agent-shell-nono--resource-wrapper ()
+  "Return the systemd-run scope args bounding the agent's resources.
+Includes the \`systemd-run' program itself, ready to prepend before the
+nono invocation, or nil when no limit is configured or systemd-run is
+unavailable.  Nono must NOT be passed --memory/--max-processes
+alongside this wrapper: its supervisor would move the sandboxed tree
+into a leaf cgroup under user@<uid>.service, outside this scope, and
+the limits below would silently not apply."
+  (let ((props
+         (append
+          (when-let* ((cpus (and (agent-shell-nono--native-linux-p)
+                                 agent-shell-nono-cpu-limit
+                                 (max 1 agent-shell-nono-cpu-limit))))
+            (list (format "CPUQuota=%d%%" (* 100 cpus))))
+          (when-let* ((memory (and (agent-shell-nono--native-linux-p)
+                                   (agent-shell-nono--memory-arg))))
+            (list (format "MemoryMax=%s" memory)
+                  "MemorySwapMax=0")))))
+    (when props
+      (append (list "systemd-run" "--user" "--scope" "--quiet")
+              (mapcan (lambda (prop) (list "-p" prop)) props)))))
 
 ;;; Managed SSH agent (host side, outside the sandbox).
 
@@ -785,17 +813,11 @@ left unwrapped.  A missing nono binary is an error."
                          "Nono is required; install it, e.g. `mise use -g nono@latest'")))
               (profile (agent-shell-nono--generate-profile)))
           (append
+           (agent-shell-nono--resource-wrapper)
            (list nono "--silent" "run"
                  "--profile" profile
                  "--workdir" (expand-file-name default-directory)
                  "--allow-cwd")
-           (when (agent-shell-nono--native-linux-p)
-             (append
-              (when-let* ((memory (agent-shell-nono--memory-arg)))
-                (list "--memory" memory))
-              (when agent-shell-nono-max-processes
-                (list "--max-processes"
-                      (number-to-string agent-shell-nono-max-processes)))))
            (list "--no-rollback" "--no-rollback-prompt"
                  "--startup-timeout" "0" "--")))))))
 
