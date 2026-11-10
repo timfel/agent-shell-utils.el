@@ -224,19 +224,13 @@ granted."
         "$WORKDIR/../war1gus"
         "$WORKDIR/../stargus"
         "$WORKDIR/../mx"
-        "$HOME/.config/stratagus"
-        "$HOME/.config/wargus"
-        "$HOME/.config/war1gus"
-        "$HOME/.config/stargus"
         (list :path "/tmp" :when "linux")
         (list :path "/dev/shm" :when "linux"))
   "Directories granted read-write in generated nono profiles.
 Entries are strings or {path, when} condition objects.  The workdir
 itself is always read-write.  /dev/shm is the POSIX shared-memory
 tmpfs; PulseAudio clients and Chromium-family programs create segments
-there, and it sits at the same trust level as the granted /tmp.
-The game config directories let sandboxed Stratagus-family games save
-their own preferences."
+there, and it sits at the same trust level as the granted /tmp."
   :type '(repeat (choice (string :tag "Path")
                          (plist :options [(const "path")] :tag "Conditional")))
   :group 'agent-shell-utils)
@@ -400,7 +394,87 @@ reads already fail at the kernel level."
   "Generated nono profile file last used for this agent buffer.")
 (defvar-local agent-shell-nono--remembered-approvals nil
   "Alist of (PATH . ACCESS) approvals remembered for this session.
-Included in the generated profile on subsequent launches.")
+Answering an approval with `a' fills this list and additionally
+persists the grant via `agent-shell-nono-extra-grants' in the
+session directory's .dir-locals.el.")
+
+(defvar agent-shell-nono-extra-grants nil
+  "Directory-local (PATH . ACCESS) nono grants, written by answering `a'.
+ACCESS is \"read\", \"write\" or \"readwrite\".  Meant to be set through
+.dir-locals.el: `agent-shell-nono--approval-ask' appends grants there
+when you approve permanently, and `agent-shell-nono--dir-locals-grants'
+reads them back from the session directory and its ancestors when a
+profile is generated, so \"always\" approvals are reused and auditable
+per project.")
+
+(defun agent-shell-nono--safe-extra-grants-p (value)
+  "Non-nil when VALUE is a list of (PATH . ACCESS) grant pairs."
+  (and (listp value)
+       (seq-every-p (lambda (pair)
+                      (and (consp pair)
+                           (stringp (car pair))
+                           (member (cdr pair) '("read" "write" "readwrite"))))
+                    value)))
+
+(put 'agent-shell-nono-extra-grants 'safe-local-variable
+     #'agent-shell-nono--safe-extra-grants-p)
+
+(defun agent-shell-nono--dir-locals-file-grants (file)
+  "Return the grant pairs stored for this package in the .dir-locals.el FILE."
+  (let ((grants nil))
+    (dolist (entry (ignore-errors
+                     (with-temp-buffer
+                       (insert-file-contents file)
+                       (read (current-buffer)))))
+      (dolist (var (cdr-safe entry))
+        (when (eq (car-safe var) 'agent-shell-nono-extra-grants)
+          (dolist (grant (cdr-safe var))
+            (when (consp grant)
+              (push grant grants))))))
+    (nreverse grants)))
+
+(defun agent-shell-nono--dir-locals-grants ()
+  "Collect persisted grants from .dir-locals.el files above the session dir."
+  (let ((dir (file-name-as-directory (expand-file-name default-directory)))
+        (grants nil))
+    (while (and (stringp dir) (not (equal dir "/")))
+      (let ((file (expand-file-name ".dir-locals.el" dir)))
+        (when (file-exists-p file)
+          (dolist (grant (agent-shell-nono--dir-locals-file-grants file))
+            (unless (member grant grants)
+              (push grant grants)))))
+      (setq dir (file-name-directory (directory-file-name dir))))
+    (nreverse grants)))
+
+(defun agent-shell-nono--persist-grant (path access)
+  "Append grant PATH ACCESS to agent-shell-nono-extra-grants in .dir-locals.el."
+  (let ((file (expand-file-name ".dir-locals.el"))
+        (grant (cons (expand-file-name path) (downcase access))))
+    (condition-case-unless-debug err
+        (let* ((data (when (file-exists-p file)
+                       (with-temp-buffer
+                         (insert-file-contents file)
+                         (read (current-buffer)))))
+               (elt (assq nil data))
+               (vars (if elt (cdr elt) nil))
+               (cell (assq 'agent-shell-nono-extra-grants vars)))
+          (if cell
+              (unless (member grant (cdr cell))
+                (setcdr cell (append (cdr cell) (list grant))))
+            (setq vars (cons (cons 'agent-shell-nono-extra-grants
+                                   (list grant))
+                             vars)))
+          (if elt
+              (setcdr elt vars)
+            (setq data (cons (cons nil vars) data)))
+          (with-temp-buffer
+            (pp data (current-buffer))
+            (write-region (point-min) (point-max) file))
+          (message "[nono] persisted grant %s (%s) to %s"
+                   (car grant) (cdr grant) (abbreviate-file-name file)))
+      (error
+       (message "[nono] could not persist grant to %s: %s"
+                file (error-message-string err))))))
 
 ;;; Platform helpers.
 
@@ -687,7 +761,7 @@ belongs to Emacs, not to an agent sandbox or systemd service."
               (ding)
               (read-char-from-minibuffer
                (format (concat "[nono:%s] allow %s access to %s (pid %s)? "
-                               "y / n / a(lways for this session): ")
+                               "y / n / a(lways for this directory): ")
                        (buffer-name buffer) (downcase access) path
                        (or (map-elt request :child_pid) "?"))
                (list ?y ?n ?a)))))))
@@ -697,7 +771,8 @@ belongs to Emacs, not to an agent sandbox or systemd service."
         (with-current-buffer buffer
           (cl-pushnew (cons path (downcase access))
                       agent-shell-nono--remembered-approvals
-                      :test #'equal)))
+                      :test #'equal)
+          (agent-shell-nono--persist-grant path access)))
       (agent-shell-nono--approval-reply process "{\"decision\":\"grant\"}"))
      ((eq answer ?y)
       (agent-shell-nono--approval-reply process "{\"decision\":\"grant\"}"))
@@ -734,11 +809,13 @@ belongs to Emacs, not to an agent sandbox or systemd service."
             (ignore-errors (delete-file file))))))))
 
 (defun agent-shell-nono--remembered-grants ()
-  "Turn remembered approvals into profile filesystem list entries."
+  "Turn remembered and persisted approvals into profile filesystem entries."
   (let ((allow nil) (read nil) (read-file nil) (write nil) (write-file nil))
-    (dolist (pair agent-shell-nono--remembered-approvals)
+    (dolist (pair (seq-uniq (append agent-shell-nono--remembered-approvals
+                                    (agent-shell-nono--dir-locals-grants))
+                            #'equal))
       (let ((path (car pair))
-            (is-write (equal (cdr pair) "write")))
+            (is-write (member (cdr pair) '("write" "readwrite"))))
         (if (file-directory-p path)
             (if is-write (push path allow) (push path read))
           (if is-write (push path write-file) (push path read-file)))))
