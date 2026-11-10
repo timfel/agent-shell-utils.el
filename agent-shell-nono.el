@@ -170,9 +170,16 @@ passphrase on the agent's ACP connection."
 
 (defcustom agent-shell-nono-system-read-paths
   '("/usr" "/bin" "/sbin" "/lib" "/lib64" "/usr/local" "/etc" "/opt"
-    "/nix/store")
+    "/nix/store" "/proc/sys/vm" "/sys/devices/system/cpu"
+    "/sys/fs/cgroup/user.slice")
   "System-wide directories granted read-only so system tools work.
 This keeps system-installed compilers, linkers and utilities usable.
+It also covers the resource-limit introspection recent Node releases
+perform at startup (walking cpu.max/memory.max up the cgroup ancestors
+of the systemd-run scope, plus /proc/sys/vm and cpu/online probes):
+the scope names are per-launch, so the whole user.slice subtree is
+granted.  Read-only cannot defeat the caps (only write access to the
+limit files could, per nono's resource-limits docs).
 Socket-bearing runtime directories (/run, /var/run) are deliberately
 absent: service sockets there (systemd, D-Bus, dbus-broker, ...) are
 escape paths and are not granted."
