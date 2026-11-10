@@ -92,9 +92,12 @@ nil disables the memory cap."
   :type 'number
   :group 'agent-shell-utils)
 
-(defcustom agent-shell-nono-max-processes 2
+(defcustom agent-shell-nono-max-processes 128
   "Task (process + thread) cap passed to nono via --max-processes.
 At the cap the kernel refuses new forks instead of killing the sandbox.
+Note this counts threads too: an idle pi-acp session (node plus pi)
+already consumes around fifteen tasks, and agents fork shells, git,
+and rg constantly, so low hundreds is the realistic floor.
 nono has no CPU-quota facility; this is its process-side resource cap.
 nil disables the limit."
   :type '(choice (const :tag "No limit" nil) integer)
