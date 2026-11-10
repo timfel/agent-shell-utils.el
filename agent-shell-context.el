@@ -117,7 +117,7 @@ corresponding major-mode highlighter."
             (default-directory
              (expand-file-name default-directory))
             (t nil))))
-      (or (when-let ((project (and directory
+      (or (when-let* ((project (and directory
                                    (project-current nil directory))))
             (expand-file-name (project-root project)))
           directory))))
@@ -546,7 +546,7 @@ hunk or file."
   "Return the current hunk or file section, or nil when none is selected.
 
 If the region is active, it has to stay inside a single hunk body."
-  (when-let ((section (magit-current-section)))
+  (when-let* ((section (magit-current-section)))
     (cond
      ((and (magit-hunk-section-p section)
            (or (not (region-active-p))

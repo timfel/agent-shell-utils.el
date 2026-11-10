@@ -117,7 +117,7 @@ directories containing those folders."
 
 (defun agent-shell-dashboard--agent-shell-root-for-directory (directory)
   "Return nearest ancestor of DIRECTORY containing `.agent-shell'."
-  (when-let ((root (locate-dominating-file directory ".agent-shell")))
+  (when-let* ((root (locate-dominating-file directory ".agent-shell")))
     (agent-shell-dashboard--directory root)))
 
 (defun agent-shell-dashboard--directory-subdirs (directory)
@@ -207,7 +207,7 @@ directories containing those folders."
 (defun agent-shell-dashboard--buffer-directory (buffer)
   "Return BUFFER's active agent-shell directory."
   (with-current-buffer buffer
-    (when-let ((directory (or (ignore-errors (agent-shell-cwd))
+    (when-let* ((directory (or (ignore-errors (agent-shell-cwd))
                               default-directory)))
       (agent-shell-dashboard--directory directory))))
 
@@ -312,7 +312,7 @@ Assignment uses the most specific containing folder from FOLDERS."
 
 (defun agent-shell-dashboard--finished-unseen-p (buffer)
   "Return non-nil when BUFFER finished since it was last visited."
-  (when-let ((entry (agent-shell-dashboard--attention-pending-entry buffer)))
+  (when-let* ((entry (agent-shell-dashboard--attention-pending-entry buffer)))
     (let ((label (agent-shell-dashboard--attention-entry-label entry)))
       (not (and (stringp label)
                 (string-prefix-p "Permission:" label))))))
@@ -463,7 +463,7 @@ When the command fails, call ERROR-CALLBACK with an error string."
 
 (defun agent-shell-dashboard--git-remote-coordinates (directory)
   "Infer Bitbucket project/repo coordinates from DIRECTORY's origin URL."
-  (when-let ((remote (agent-shell-dashboard--git-remote directory)))
+  (when-let* ((remote (agent-shell-dashboard--git-remote directory)))
     (agent-shell-dashboard--git-remote-coordinates-from-url remote)))
 
 (defun agent-shell-dashboard--agent-shell-candidates (folder)
@@ -502,7 +502,7 @@ When the command fails, call ERROR-CALLBACK with an error string."
 (defun agent-shell-dashboard--push-unique (item key-fn items)
   "Add ITEM to ITEMS when KEY-FN does not already identify an existing item."
   (let ((key (funcall key-fn item)))
-    (if-let ((existing (seq-find (lambda (other)
+    (if-let* ((existing (seq-find (lambda (other)
                                    (equal key (funcall key-fn other)))
                                  items)))
         (progn
@@ -546,7 +546,7 @@ When the command fails, call ERROR-CALLBACK with an error string."
                 (file-name-nondirectory (directory-file-name folder))))
         (prs nil))
     (dolist (directory (agent-shell-dashboard--git-directories folder))
-      (when-let ((branch (agent-shell-dashboard--git-branch directory)))
+      (when-let* ((branch (agent-shell-dashboard--git-branch directory)))
         (setq jiras
               (seq-reduce
                (lambda (items jira)
@@ -595,7 +595,7 @@ When the command fails, call ERROR-CALLBACK with an error string."
    ((agent-shell-dashboard--json-map-p object)
     (or (when (equal (format "%s" (map-elt object 'id)) id)
           object)
-        (when-let ((pull-request (map-elt object 'pullRequest)))
+        (when-let* ((pull-request (map-elt object 'pullRequest)))
           (agent-shell-dashboard--find-pr-in-json pull-request id))
         (seq-some (lambda (pair)
                     (agent-shell-dashboard--find-pr-in-json (cdr pair) id))
@@ -641,7 +641,7 @@ When the command fails, call ERROR-CALLBACK with an error string."
 (defun agent-shell-dashboard--bitbucket-branch-name (ref)
   "Return branch display name from Bitbucket REF."
   (when (agent-shell-dashboard--json-map-p ref)
-    (when-let ((name (or (map-elt ref 'displayId)
+    (when-let* ((name (or (map-elt ref 'displayId)
                          (map-elt ref 'id))))
       (when (stringp name)
         (string-remove-prefix "refs/heads/" name)))))
@@ -650,14 +650,14 @@ When the command fails, call ERROR-CALLBACK with an error string."
   "Return latest commit from Bitbucket PR OBJECT."
   (or (map-elt object 'latestCommit)
       (map-elt object 'lastCommit)
-      (when-let ((from-ref (map-elt object 'fromRef)))
+      (when-let* ((from-ref (map-elt object 'fromRef)))
         (or (map-elt from-ref 'latestCommit)
             (map-elt from-ref 'lastCommit)
             (map-elt from-ref 'latestChangeset)))))
 
 (defun agent-shell-dashboard--pr-from-object (project repo object)
   "Return dashboard PR plist from Bitbucket PR OBJECT."
-  (when-let ((id (map-elt object 'id)))
+  (when-let* ((id (map-elt object 'id)))
     (append
      (list :project project
            :repo repo
@@ -700,7 +700,7 @@ When the command fails, call ERROR-CALLBACK with an error string."
   (let ((text (agent-shell-dashboard--pr-search-text pr)))
     (seq-some
      (lambda (jira)
-       (when-let ((key (plist-get jira :key)))
+       (when-let* ((key (plist-get jira :key)))
          (agent-shell-dashboard--text-contains-jira-p text key)))
      jiras)))
 
@@ -896,7 +896,7 @@ computed value."
                 (file-name-nondirectory (directory-file-name folder))))
         (prs nil))
     (dolist (info infos)
-      (when-let ((branch (plist-get info :branch)))
+      (when-let* ((branch (plist-get info :branch)))
         (setq jiras
               (seq-reduce
                (lambda (items jira)
@@ -904,7 +904,7 @@ computed value."
                   jira (lambda (item) (plist-get item :key)) items))
                (agent-shell-dashboard--extract-jiras-from-name branch)
                jiras))
-        (when-let ((coords (plist-get info :coords)))
+        (when-let* ((coords (plist-get info :coords)))
           (when (string-match "\\bPR[-_]?\\([0-9]+\\)\\b" branch)
             (push (append coords
                           (list :id (match-string 1 branch)))
@@ -991,7 +991,7 @@ When FILTER-TEXT is non-nil, ask Bitbucket to filter PRs by it."
                     :head (plist-get info :head))
               requests)
         (dolist (jira jiras)
-          (when-let ((key (plist-get jira :key)))
+          (when-let* ((key (plist-get jira :key)))
             (push (list :project project
                         :repo repo
                         :filter key
@@ -1030,7 +1030,7 @@ When FILTER-TEXT is non-nil, ask Bitbucket to filter PRs by it."
   (agent-shell-dashboard--async-map
    jiras
    (lambda (jira done)
-     (if-let ((key (plist-get jira :key)))
+     (if-let* ((key (plist-get jira :key)))
          (agent-shell-dashboard--fetch-jira-async
           key cache
           (lambda (fetched)
@@ -1200,7 +1200,7 @@ metadata already present on that row."
                             (or (plist-get pr :project) "?")
                             (or (plist-get pr :repo) "?")
                             (or (plist-get pr :id) "?")
-                            (if-let ((status (plist-get pr :status)))
+                            (if-let* ((status (plist-get pr :status)))
                                 (format " [%s]" status)
                               ""))))
          (agent-shell-dashboard--link-text
@@ -1587,7 +1587,7 @@ Ask which one to use when ROW has multiple live buffers."
   (interactive)
   (let* ((row (agent-shell-dashboard--row-at-point))
          (folder (plist-get row :folder)))
-    (if-let ((buffer (agent-shell-dashboard--row-buffer row)))
+    (if-let* ((buffer (agent-shell-dashboard--row-buffer row)))
         (pop-to-buffer buffer)
       (let* ((launch-directory
               (agent-shell-dashboard--launch-directory folder))
@@ -1604,7 +1604,7 @@ Ask which one to use when ROW has multiple live buffers."
 (defun agent-shell-dashboard-rename-buffer ()
   "Rename the live agent-shell buffer on the current row."
   (interactive)
-  (if-let ((buffer (agent-shell-dashboard--row-buffer
+  (if-let* ((buffer (agent-shell-dashboard--row-buffer
                     (agent-shell-dashboard--row-at-point))))
       (progn
         (with-current-buffer buffer
@@ -1769,7 +1769,7 @@ Ask which one to use when ROW has multiple live buffers."
 (defun agent-shell-dashboard--update-jira-close-fields-via-api
     (key fix-version labels)
   "Update Jira KEY with FIX-VERSION and LABELS using jira.el."
-  (when-let ((data (agent-shell-dashboard--jira-close-update-data
+  (when-let* ((data (agent-shell-dashboard--jira-close-update-data
                     fix-version labels)))
     (jira-api-call
      "PUT" (format "issue/%s" key)
@@ -1781,7 +1781,7 @@ Ask which one to use when ROW has multiple live buffers."
 (defun agent-shell-dashboard--update-jira-close-fields-via-gdev
     (key fix-version labels)
   "Update Jira KEY with FIX-VERSION and LABELS using gdev-cli."
-  (when-let ((data (agent-shell-dashboard--jira-close-update-data
+  (when-let* ((data (agent-shell-dashboard--jira-close-update-data
                     fix-version labels)))
     (let ((template (make-temp-file "agent-shell-dashboard-jira-" nil ".json")))
       (unwind-protect
@@ -1900,7 +1900,7 @@ Ask which one to use when ROW has multiple live buffers."
 
 (defun agent-shell-dashboard--git-common-dir (directory)
   "Return Git common dir for linked worktree DIRECTORY."
-  (when-let ((common (agent-shell-dashboard--git-output
+  (when-let* ((common (agent-shell-dashboard--git-output
                       directory "rev-parse" "--git-common-dir")))
     (if (file-name-absolute-p common)
         common
@@ -1909,7 +1909,7 @@ Ask which one to use when ROW has multiple live buffers."
 (defun agent-shell-dashboard--remove-git-worktree-link (directory)
   "Remove Git worktree metadata for linked worktree DIRECTORY."
   (when (agent-shell-dashboard--linked-git-worktree-p directory)
-    (if-let ((common-dir (agent-shell-dashboard--git-common-dir directory)))
+    (if-let* ((common-dir (agent-shell-dashboard--git-common-dir directory)))
         (let ((default-directory
                (or (agent-shell-dashboard--parent-directory directory)
                    default-directory)))
@@ -2017,7 +2017,7 @@ Ask which one to use when ROW has multiple live buffers."
 (defun agent-shell-dashboard ()
   "Open the agent-shell worktree dashboard."
   (interactive)
-  (if-let ((buffer (get-buffer agent-shell-dashboard--buffer-name)))
+  (if-let* ((buffer (get-buffer agent-shell-dashboard--buffer-name)))
       (pop-to-buffer buffer)
     (let ((buffer (get-buffer-create agent-shell-dashboard--buffer-name)))
       (with-current-buffer buffer
