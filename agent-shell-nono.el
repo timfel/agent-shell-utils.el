@@ -170,8 +170,10 @@ passphrase on the agent's ACP connection."
 
 (defcustom agent-shell-nono-system-read-paths
   '("/usr" "/bin" "/sbin" "/lib" "/lib64" "/usr/local" "/etc" "/opt"
-    "/nix/store" "/proc/sys/vm" "/sys/devices/system/cpu"
-    "/sys/fs/cgroup/user.slice")
+    "/nix/store" "/proc/sys/vm" "/proc/sys/kernel" "/proc/sys/crypto"
+    "/sys/devices/system/cpu" "/sys/bus" "/sys/class"
+    "/sys/fs/cgroup/user.slice"
+    "/var/lib/sss/pubconf" "/var/lib/flatpak/exports")
   "System-wide directories granted read-only so system tools work.
 This keeps system-installed compilers, linkers and utilities usable.
 It also covers the resource-limit introspection recent Node releases
@@ -215,10 +217,13 @@ escape paths and are not granted."
         "$WORKDIR/../war1gus"
         "$WORKDIR/../stargus"
         "$WORKDIR/../mx"
-        (list :path "/tmp" :when "linux"))
+        (list :path "/tmp" :when "linux")
+        (list :path "/dev/shm" :when "linux"))
   "Directories granted read-write in generated nono profiles.
 Entries are strings or {path, when} condition objects.  The workdir
-itself is always read-write."
+itself is always read-write.  /dev/shm is the POSIX shared-memory
+tmpfs; PulseAudio clients and Chromium-family programs create segments
+there, and it sits at the same trust level as the granted /tmp."
   :type '(repeat (choice (string :tag "Path")
                          (plist :options [(const "path")] :tag "Conditional")))
   :group 'agent-shell-utils)
@@ -241,8 +246,18 @@ itself is always read-write."
     "$HOME/.sdkman"
     "$HOME/bin"
     "$HOME/dev"
-    "$HOME/dotfiles/bin")
-  "Directories granted read-only in generated nono profiles."
+    "$HOME/dotfiles/bin"
+    "$HOME/.config/kdedefaults"
+    "$HOME/.local/share/fonts"
+    "$HOME/.local/share/flatpak/exports"
+    "$XDG_RUNTIME_DIR")
+  "Directories granted read-only in generated nono profiles.
+Includes desktop-platform discovery data (fonts, icon and mime
+exports, KDE defaults) so GUI apps launched by agents start without
+prompting, and a read-only listing of $XDG_RUNTIME_DIR: listing the
+runtime directory only reveals socket names; connecting to a socket is
+separately mediated by the profile's unix_socket grants, so this does
+not reopen the D-Bus/systemd escape surface."
   :type '(repeat string)
   :group 'agent-shell-utils)
 
@@ -277,7 +292,12 @@ itself is always read-write."
     "$HOME/.topazini"
     "$HOME/.vimrc"
     "$HOME/.config/bottom/bottom.toml"
-    "$HOME/.config/llama.cpp/models.ini")
+    "$HOME/.config/llama.cpp/models.ini"
+    "$HOME/.config/kdeglobals"
+    "$HOME/.config/kwinrc"
+    "$HOME/.config/dolphinrc"
+    "$HOME/.config/user-dirs.dirs"
+    "$HOME/.local/share/user-places.xbel")
   "Single files granted read-only in generated nono profiles.
 nono's default deny groups block shell dotfiles; the grants in this
 variable plus `agent-shell-nono-bypass-protection-paths' reopen them."
@@ -285,11 +305,31 @@ variable plus `agent-shell-nono-bypass-protection-paths' reopen them."
   :group 'agent-shell-utils)
 
 (defcustom agent-shell-nono-bypass-protection-paths
-  '("$HOME/.ssh/known_hosts" "$HOME/.bashrc" "$HOME/.bash_profile")
+  '("$HOME/.ssh/known_hosts" "$HOME/.bashrc" "$HOME/.bash_profile"
+    "$HOME/.config/kdeglobals" "$HOME/.config/kwinrc"
+    "$HOME/.config/dolphinrc" "$HOME/.config/user-dirs.dirs"
+    "$HOME/.local/share/user-places.xbel" "$HOME/.config/kdedefaults"
+    "$HOME/.config/QtProject.conf")
   "Default deny rules to lift for the read grants above.
 `bypass_protection' only removes the matching deny rule; access still
 needs a matching grant in one of the read lists."
   :type '(repeat string)
+  :group 'agent-shell-utils)
+
+(defcustom agent-shell-nono-write-file-paths
+  '("$HOME/.config/QtProject.conf")
+  "Single files granted read-write in generated nono profiles.
+The Qt platform layer creates and updates QtProject.conf on every GUI
+program start, so denying it makes every sandboxed Qt app prompt."
+  :type '(repeat string)
+  :group 'agent-shell-utils)
+
+(defcustom agent-shell-nono-pulse-audio t
+  "When non-nil, sandboxed games and media tools may play sound.
+Adds $XDG_RUNTIME_DIR/pulse/native to the profile's unix_socket
+grants.  Like the Wayland grant this trades a small escape surface
+(audio output and information about playing streams) for usability."
+  :type 'boolean
   :group 'agent-shell-utils)
 
 (defcustom agent-shell-nono-block-x11 t
@@ -700,6 +740,9 @@ belongs to Emacs, not to an agent sandbox or systemd service."
             (mapcar (lambda (socket-name)
                       (format "$XDG_RUNTIME_DIR/%s" socket-name))
                     agent-shell-nono-wayland-sockets))
+          (when (and agent-shell-nono-pulse-audio
+                     (getenv "XDG_RUNTIME_DIR"))
+            (list "$XDG_RUNTIME_DIR/pulse/native"))
           (when ssh-socket (list ssh-socket))))
         (set-vars (list))
         overrides)
@@ -770,7 +813,8 @@ belongs to Emacs, not to an agent sandbox or systemd service."
                                       '("$HOME/.ssh/known_hosts")
                                       (plist-get extra :read_file))
                    :write (plist-get extra :write)
-                   :write_file (plist-get extra :write_file)
+                   :write_file (vconcat agent-shell-nono-write-file-paths
+                                        (plist-get extra :write_file))
                    :deny (vconcat agent-shell-nono-extra-deny-paths)
                    :bypass_protection
                    (vconcat agent-shell-nono-bypass-protection-paths))
