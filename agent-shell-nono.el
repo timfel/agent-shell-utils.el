@@ -170,9 +170,11 @@ passphrase on the agent's ACP connection."
 
 (defcustom agent-shell-nono-system-read-paths
   '("/usr" "/bin" "/sbin" "/lib" "/lib64" "/usr/local" "/etc" "/opt"
-    "/nix/store" "/proc/sys/vm" "/proc/sys/kernel" "/proc/sys/crypto"
-    "/sys/devices/system/cpu" "/sys/bus" "/sys/class"
-    "/sys/fs/cgroup/user.slice"
+    "/nix/store" "/proc" "/proc/sys/vm" "/proc/sys/kernel"
+    "/proc/sys/crypto" "/sys/devices/system/cpu"
+    "/sys/devices/system/node" "/sys/kernel/mm"
+    "/sys/bus" "/sys/class"
+    "/sys/fs/cgroup/user.slice" "/run/user"
     "/var/lib/sss/pubconf" "/var/lib/flatpak/exports")
   "System-wide directories granted read-only so system tools work.
 This keeps system-installed compilers, linkers and utilities usable.
@@ -182,9 +184,14 @@ of the systemd-run scope, plus /proc/sys/vm and cpu/online probes):
 the scope names are per-launch, so the whole user.slice subtree is
 granted.  Read-only cannot defeat the caps (only write access to the
 limit files could, per nono's resource-limits docs).
+Read-only /proc lets ps, libuv and friends enumerate processes (list
+plus per-PID files, same-uid); writes to /proc/sys knobs stay
+ungranted.  /run/user is read-only too: listing it exposes only uid
+directory names, while /run and /var/run stay ungranted entirely.
 Socket-bearing runtime directories (/run, /var/run) are deliberately
-absent: service sockets there (systemd, D-Bus, dbus-broker, ...) are
-escape paths and are not granted."
+absent as writable or socket-granted paths: service sockets there
+(systemd, D-Bus, dbus-broker, ...) are escape paths and are not
+granted."
   :type '(repeat string)
   :group 'agent-shell-utils)
 
@@ -217,13 +224,19 @@ escape paths and are not granted."
         "$WORKDIR/../war1gus"
         "$WORKDIR/../stargus"
         "$WORKDIR/../mx"
+        "$HOME/.config/stratagus"
+        "$HOME/.config/wargus"
+        "$HOME/.config/war1gus"
+        "$HOME/.config/stargus"
         (list :path "/tmp" :when "linux")
         (list :path "/dev/shm" :when "linux"))
   "Directories granted read-write in generated nono profiles.
 Entries are strings or {path, when} condition objects.  The workdir
 itself is always read-write.  /dev/shm is the POSIX shared-memory
 tmpfs; PulseAudio clients and Chromium-family programs create segments
-there, and it sits at the same trust level as the granted /tmp."
+there, and it sits at the same trust level as the granted /tmp.
+The game config directories let sandboxed Stratagus-family games save
+their own preferences."
   :type '(repeat (choice (string :tag "Path")
                          (plist :options [(const "path")] :tag "Conditional")))
   :group 'agent-shell-utils)
@@ -250,6 +263,7 @@ there, and it sits at the same trust level as the granted /tmp."
     "$HOME/.config/kdedefaults"
     "$HOME/.local/share/fonts"
     "$HOME/.local/share/flatpak/exports"
+    "$HOME/.local/state/gh"
     "$XDG_RUNTIME_DIR")
   "Directories granted read-only in generated nono profiles.
 Includes desktop-platform discovery data (fonts, icon and mime
