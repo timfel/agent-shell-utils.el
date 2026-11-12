@@ -44,12 +44,13 @@
 ;; and friends) so system-installed compilers and tools work.
 ;; Restrictions apply only where escape risk justifies it:
 ;; socket-bearing runtime directories (/run, /var/run) stay ungranted
-;; except for the specific sockets listed below.  X11 is neutralized
-;; through the environment (`agent-shell-nono-block-x11'): DISPLAY and
-;; XAUTHORITY are redirected so keyloggers and xdotool cannot reach
-;; the real X server, and X11 cookies are never granted.  (Landlock
-;; cannot deny /tmp/.X11-unix inside the allowed /tmp, so path denies
-;; alone could not achieve this.)  Wayland stays usable:
+;; except for the specific sockets listed below.  X11 is deliberately
+;; NOT sandboxed: DISPLAY and XAUTHORITY are inherited untouched, and
+;; Landlock cannot deny /tmp/.X11-unix inside the allowed /tmp anyway.
+;; Approval happens on the cookie instead - ~/.Xauthority is not
+;; granted, so the first Xlib client that needs authorization escalates
+;; to an Emacs approval prompt and only then reaches the real X server.
+;; Wayland stays usable:
 ;; $XDG_RUNTIME_DIR/wayland-* is granted as a Unix socket and
 ;; `agent-shell-nono-allow-gpu' opens render nodes, so graphical
 ;; (Wayland) applications work.
@@ -337,17 +338,6 @@ program start, so denying it makes every sandboxed Qt app prompt."
 Adds $XDG_RUNTIME_DIR/pulse/native to the profile's unix_socket
 grants.  Like the Wayland grant this trades a small escape surface
 (audio output and information about playing streams) for usability."
-  :type 'boolean
-  :group 'agent-shell-utils)
-
-(defcustom agent-shell-nono-block-x11 t
-  "When non-nil, neutralize X11 inside the sandbox via the environment.
-Landlock cannot deny paths inside an allowed directory, so while /tmp
-stays writable the DISPLAY/X11 socket itself is not revocable that way.
-Generated profiles therefore inject DISPLAY pointing at a host name
-that never resolves plus XAUTHORITY=/dev/null: Xlib clients (xdotool,
-keyloggers) fail to open the real display.  X11 cookies in
-~/.Xauthority are never granted either.  Wayland is unaffected."
   :type 'boolean
   :group 'agent-shell-utils)
 
@@ -842,13 +832,8 @@ belongs to Emacs, not to an agent sandbox or systemd service."
             (append overrides (list :filesystem
                                     (list :unix_socket
                                           (vconcat sockets))))))
-    (when agent-shell-nono-block-x11
-      ;; /tmp is writable and Landlock cannot deny /tmp/.X11-unix
-      ;; inside it, so blind the X11 socket through the environment.
-      (setq set-vars
-            (append set-vars
-                    (list :DISPLAY "nono-x11-blocked.invalid:0"
-                          :XAUTHORITY "/dev/null"))))
+    ;; X11 is intentionally untouched: DISPLAY/XAUTHORITY are inherited
+    ;; so X clients work once ~/.Xauthority is approved.
     (when ssh-socket
       (setq set-vars
             (append set-vars
@@ -886,7 +871,7 @@ belongs to Emacs, not to an agent sandbox or systemd service."
       :extends "default"
       :meta (list :name "agent-shell-session"
                   :description
-                  "Generated agent-shell sandbox: system tools readable, X11 denied, Wayland allowed")
+                  "Generated agent-shell sandbox: system tools readable, X11 gated by ~/.Xauthority approval, Wayland allowed")
       :workdir (list :access "readwrite")
       :network (append
                 (list :block (if agent-shell-nono-network-block t :false))
